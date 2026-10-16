@@ -1,0 +1,6 @@
+{
+  "name": "viicasa-legacy-firebase-tools",
+  "private": true,
+  "description": "Optional Phase 1 emulator/CLI tools, isolated from the Phase 2 application. Not part of deployment.",
+  "devDependencies": {"firebase-tools": "^15.33.0"}
+}
