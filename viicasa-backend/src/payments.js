@@ -10,6 +10,7 @@ export function paymentGateway(config, options={}) {
     return {
       provider: 'stripe',
       async create(payment, checkout) {
+        const returnPath=config.checkoutReturnPath?await config.checkoutReturnPath(checkout):null;
         const session = await stripe.checkout.sessions.create({ mode: 'payment', payment_method_types: ['card'],
           // ViiLife's approved prices are CAD, without IP-based currency conversion.
           ...(checkout.kind==='cleaning'?{adaptive_pricing:{enabled:false}}:{}),
@@ -17,8 +18,8 @@ export function paymentGateway(config, options={}) {
           metadata: { checkout_id: checkout.id, payment_id: payment.id },
           line_items: [{ quantity: 1, price_data: { currency: payment.currency.toLowerCase(), unit_amount: payment.amount_minor,
             product_data: { name: `VIICASA · ${checkout.kind === 'booking' ? 'Reservación' : checkout.kind === 'cleaning' ? 'ViiLife · Home cleaning' : 'Pedido'} ${checkout.id}` } } }],
-          success_url: `${config.siteUrl.replace(/\/$/, '')}/pago/resultado?checkout=${checkout.id}`,
-          cancel_url: `${config.siteUrl.replace(/\/$/, '')}/pago/cancelado?checkout=${checkout.id}`,
+          success_url: `${config.siteUrl.replace(/\/$/, '')}${returnPath||'/pago/resultado?checkout='+checkout.id}`,
+          cancel_url: `${config.siteUrl.replace(/\/$/, '')}${returnPath||'/pago/cancelado?checkout='+checkout.id}`,
           expires_at: Math.floor(new Date(payment.expires_at).valueOf()/1000),
         }, { idempotencyKey: `viicasa-${payment.id}` });
         return { reference: session.id, url: session.url };

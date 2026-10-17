@@ -10,27 +10,29 @@ import {recordPaidMeasurement} from './measurement.mjs';
 import {pricingTotals} from './pricing-calculation.mjs';
 import {invoiceFinance,invoiceWithFinance} from './financial-core.mjs';
 import {invoiceCalendar} from './service-time.mjs';
+import {guestCustomerSchema,buyerRef,buyerId} from './guest-checkout.mjs';
 
 const one=async(db,sql,args)=>(await db.query(sql,args)).rows[0];
 const iso=value=>new Date(value).toISOString().slice(0,10);
 const cash=n=>(Number(n)/100).toFixed(2)+' CAD';
 const numInvoice=i=>({...i,total_minor:Number(i.total_minor),discount_minor:Number(i.discount_minor),due_date:iso(i.due_date)});
-export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,customerGuard,config,gateway}){
-  const team='/api/commercial',client='/api/client';
+export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,customerGuard,config,gateway,guestAccess}){
+  const team='/api/commercial',client='/api/client',contractGuard=guestAccess.documentGuard('contract'),invoiceGuard=guestAccess.documentGuard('invoice');
   const route=(method,url,body,guard,handler)=>app.route({method,url,...(body?{schema:{body}}:{}),preHandler:guard,handler});
   const ownedLead=async(tx,id,user)=>{const lead=await one(tx,'SELECT * FROM crm_leads WHERE id=$1',[id]);if(!lead||user.role!=='admin'&&lead.owner_id!==user.id)fail(404,'Record not found.');return lead;};
   const ownedContract=async(tx,id,user)=>{const c=await one(tx,'SELECT * FROM service_contracts WHERE id=$1 FOR UPDATE',[id]);if(!c)fail(404,'Agreement not found.');await ownedLead(tx,c.lead_id,user);return c;};
   const customerContract=async(tx,id,u,lock=false)=>{const c=await one(tx,'SELECT * FROM service_contracts WHERE id=$1 AND customer_email=$2'+(lock?' FOR UPDATE':''),[id,u.email]);if(!c||c.status==='draft')fail(404,'Agreement not found.');return c;};
   const event=async(tx,c,actor,kind,action,detail={})=>tx.query('INSERT INTO contract_events(id,contract_id,actor_id,actor_kind,action,detail) VALUES($1,$2,$3,$4,$5,$6)',[randomUUID(),c.id,actor,kind,action,JSON.stringify(detail)]);
-  route('POST',client+'/requests',s.object({service:s.choice(['home','commercial']),phone:s.str(30,5),company:s.str(160,0),address:s.str(300,3),sqft:s.int(1,1000000),message:s.str(3000,0),consent:{const:true},idempotency_key:s.uuid}),customerGuard,async r=>db.transaction(async tx=>{
-    const {idempotency_key,...details}=r.body,request_hash=snapshotHash(details);
-    const previous=await one(tx,'SELECT * FROM client_service_requests WHERE customer_id=$1 AND idempotency_key=$2',[r.customer.id,idempotency_key]);
+  route('POST',client+'/requests',s.object({service:s.choice(['home','commercial']),phone:s.str(30,5),company:s.str(160,0),address:s.str(300,3),sqft:s.int(1,1000000),message:s.str(3000,0),consent:{const:true},idempotency_key:s.uuid,customer:guestCustomerSchema},['service','phone','company','address','sqft','message','consent','idempotency_key']),guestAccess.buyerGuard,async r=>db.transaction(async tx=>{
+    const {idempotency_key,customer,...details}=r.body,request_hash=snapshotHash({...details,...(r.customer.guest?{customer:{name:r.customer.name,email:r.customer.email}}:{})});
+    await tx.query('SELECT id FROM '+(r.customer.guest?'guest_buyers':'customer_accounts')+' WHERE id=$1 FOR UPDATE',[r.customer.id]);
+    const previous=await one(tx,'SELECT * FROM client_service_requests WHERE buyer_ref=$1 AND idempotency_key=$2',[buyerRef(r.customer),idempotency_key]);
     if(previous){if(previous.request_hash!==request_hash)fail(409,'This request key was used for different details.');return{id:previous.id};}
     const admin=await one(tx,"SELECT id FROM team_users WHERE role='admin' AND active AND NOT deleted ORDER BY created_at LIMIT 1",[]);if(!admin)fail(503,'Service enquiries are temporarily unavailable.');
     const id=randomUUID(),leadId=randomUUID();
     await tx.query("INSERT INTO crm_leads(id,owner_id,name,email,phone,company,service,stage,priority,source,notes) VALUES($1,$2,$3,$4,$5,$6,$7,'new','normal','Customer portal',$8)",[leadId,admin.id,r.customer.name,r.customer.email,details.phone,details.company,details.service,`${details.address} · ${details.sqft} sqft\n${details.message}`]);
-    await tx.query('INSERT INTO client_service_requests(id,customer_id,lead_id,idempotency_key,request_hash,details) VALUES($1,$2,$3,$4,$5,$6)',[id,r.customer.id,leadId,idempotency_key,request_hash,JSON.stringify(details)]);
-    await queueCommercialMail(tx,'request:'+id+':customer',r.customer.email,serviceMail({subject:'Your ViiLife enquiry has been received',title:'We will be in touch',paragraphs:[`Hello ${r.customer.name},`,'The ViiLife team will contact you to discuss your property and prepare your service proposal. No payment has been taken.'],actionUrl:new URL('/cliente',origin).href}));
+    await tx.query('INSERT INTO client_service_requests(id,customer_id,buyer_ref,lead_id,idempotency_key,request_hash,details) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,buyerId(r.customer),buyerRef(r.customer),leadId,idempotency_key,request_hash,JSON.stringify(details)]);
+    await queueCommercialMail(tx,'request:'+id+':customer',r.customer.email,serviceMail({subject:'Your ViiLife enquiry has been received',title:'We will be in touch',paragraphs:[`Hello ${r.customer.name},`,'The ViiLife team will contact you to discuss your property and prepare your service proposal. No payment has been taken.'],actionUrl:await guestAccess.sqlLink(tx,'enquiry',id,r.customer),actionLabel:r.customer.guest?'View my service request':'Open my VIICASA account'}));
     await queueCommercialMail(tx,'request:'+id+':team',config.adminEmail,serviceMail({subject:'New ViiLife enquiry · team notice',title:'A new service enquiry',paragraphs:['Review and assign the new enquiry in your CRM.'],details:[['Customer',r.customer.name],['Email',r.customer.email],['Service',details.service]],actionUrl:new URL('/equipo',origin).href}));
     await tx.query('INSERT INTO team_notifications(id,user_id,body) VALUES($1,$2,$3)',[randomUUID(),admin.id,'A new client requested a ViiLife '+details.service+' service proposal.']);return{id};
   }));
@@ -59,7 +61,7 @@ export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,cus
   route('POST',team+'/contracts/:id/send',s.object({}),teamGuard,async r=>db.transaction(async tx=>{
     const c=await ownedContract(tx,r.params.id,r.teamUser);if(c.status==='sent')return{ok:true};if(c.status!=='draft')fail(409,'This agreement cannot be sent again.');
     await tx.query("UPDATE service_contracts SET status='sent',sent_at=now() WHERE id=$1",[c.id]);
-    await queueCommercialMail(tx,'contract:'+c.id+':sent',c.customer_email,{...serviceMail({subject:'Your ViiLife agreement is ready',title:'Your service agreement',paragraphs:[`Hello ${c.snapshot.customer.name},`,'Your service agreement is ready for review. Sign in using the email on this agreement to review the schedule, price and terms. No payment is taken when you accept it.'],details:[['Service',c.snapshot.quote.service],['Amount for this schedule',cash(c.snapshot.quote.total_minor)]],actionUrl:new URL('/cliente?contract='+c.id,origin).href}),attachments:[pdfAttachment('contract',{...c,status:'sent'})]});
+    await queueCommercialMail(tx,'contract:'+c.id+':sent',c.customer_email,{...serviceMail({subject:'Your ViiLife agreement is ready',title:'Your service agreement',paragraphs:[`Hello ${c.snapshot.customer.name},`,'Your service agreement is ready for review. Use the private link in this email to review the schedule, price and terms. No account is required. No payment is taken when you accept it.'],details:[['Service',c.snapshot.quote.service],['Amount for this schedule',cash(c.snapshot.quote.total_minor)]],actionUrl:await guestAccess.documentLink(tx,'contract',c),actionLabel:'Review my agreement'}),attachments:[pdfAttachment('contract',{...c,status:'sent'})]});
     await event(tx,c,r.teamUser.id,'team','sent');await audit(tx,r.teamUser.id,'contract.send',c.id);return{ok:true};
   }));
   route('POST',team+'/contracts/:id/cancel',s.object({reason:s.str(1000,3)}),adminGuard,async r=>db.transaction(async tx=>{
@@ -67,28 +69,28 @@ export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,cus
     await tx.query("UPDATE service_contracts SET status='cancelled' WHERE id=$1",[c.id]);await event(tx,c,r.teamUser.id,'team','cancelled',{reason:r.body.reason});return{ok:true};
   }));
   route('GET',client+'/contracts',null,customerGuard,async r=>({items:(await db.query("SELECT * FROM service_contracts WHERE customer_email=$1 AND status<>'draft' ORDER BY created_at DESC",[r.customer.email])).rows}));
-  route('GET',client+'/contracts/:id',null,customerGuard,r=>customerContract(db,r.params.id,r.customer));
-  route('GET',client+'/contracts/:id/print',null,customerGuard,async(r,reply)=>reply.type('text/html').send(documentHtml('Service agreement',contractBody(await customerContract(db,r.params.id,r.customer)))));
-  route('GET',client+'/contracts/:id/pdf',null,customerGuard,async(r,reply)=>download(reply,'contract',await customerContract(db,r.params.id,r.customer)));
-  route('POST',client+'/contracts/:id/accept',s.object({snapshot_hash:{type:'string',pattern:'^[a-f0-9]{64}$'},signed_name:s.str(120,2),consent:{const:true},subcontractors:{const:true},access_method:s.choice(['arrival','standing']),photo_marketing_optout:s.bool}),customerGuard,async r=>db.transaction(async tx=>{
+  route('GET',client+'/contracts/:id',null,contractGuard,r=>customerContract(db,r.params.id,r.customer));
+  route('GET',client+'/contracts/:id/print',null,contractGuard,async(r,reply)=>reply.type('text/html').send(documentHtml('Service agreement',contractBody(await customerContract(db,r.params.id,r.customer)))));
+  route('GET',client+'/contracts/:id/pdf',null,contractGuard,async(r,reply)=>download(reply,'contract',await customerContract(db,r.params.id,r.customer)));
+  route('POST',client+'/contracts/:id/accept',s.object({snapshot_hash:{type:'string',pattern:'^[a-f0-9]{64}$'},signed_name:s.str(120,2),consent:{const:true},subcontractors:{const:true},access_method:s.choice(['arrival','standing']),photo_marketing_optout:s.bool}),contractGuard,async r=>db.transaction(async tx=>{
     r.body.signed_name=r.body.signed_name.trim();if(r.body.signed_name.length<2)fail(400,'Enter your full name.');
     const c=await customerContract(tx,r.params.id,r.customer,true);
     if(c.snapshot_hash!==r.body.snapshot_hash||snapshotHash(c.snapshot)!==c.snapshot_hash)fail(409,'Agreement changed. Review the current document.');
     if(c.status==='accepted'){if(c.accepted_by!==r.customer.id||['signed_name','access_method','photo_marketing_optout'].some(k=>c.acceptance[k]!==r.body[k]))fail(409,'Acceptance cannot be changed.');return{ok:true};}
     if(c.status!=='sent')fail(409,'This agreement is no longer open for acceptance.');
-    const acceptance={signed_name:r.body.signed_name,email:r.customer.email,accepted_at:new Date().toISOString(),access_method:r.body.access_method,photo_marketing_optout:r.body.photo_marketing_optout,subcontractors:true,consent:true,auth_method:'verified_email_account',snapshot_hash:c.snapshot_hash};
+    const acceptance={signed_name:r.body.signed_name,email:r.customer.email,accepted_at:new Date().toISOString(),access_method:r.body.access_method,photo_marketing_optout:r.body.photo_marketing_optout,subcontractors:true,consent:true,auth_method:r.customer.guest?'private_email_link':'verified_email_account',snapshot_hash:c.snapshot_hash};
     acceptance.evidence_hash=snapshotHash({snapshot:c.snapshot,acceptance});
     await tx.query("UPDATE service_contracts SET status='accepted',accepted_by=$2,acceptance=$3,accepted_at=now() WHERE id=$1",[c.id,r.customer.id,JSON.stringify(acceptance)]);
     for(const v of c.snapshot.visits)await tx.query('INSERT INTO service_visits(id,contract_id,property_index,service_date,arrival_window,address,amount_minor,discount_minor,pricing) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[randomUUID(),c.id,v.property_index,v.service_date,v.arrival_window,v.address,v.amount_minor,v.discount_minor,JSON.stringify(v.pricing||{})]);
-    await event(tx,c,r.customer.id,'customer','accepted',acceptance);
-    const customerMail=serviceMail({subject:'Your ViiLife agreement has been accepted',title:'Agreement accepted',paragraphs:[`Thank you, ${r.body.signed_name}.`,'Your acceptance and service schedule have been saved. The ViiLife team will contact you to coordinate access and confirm the visit details.'],actionUrl:new URL('/cliente?contract='+c.id,origin).href});
+    await event(tx,c,r.customer.actor_id||r.customer.id,'customer','accepted',acceptance);
+    const customerMail=serviceMail({subject:'Your ViiLife agreement has been accepted',title:'Agreement accepted',paragraphs:[`Thank you, ${r.body.signed_name}.`,'Your acceptance and service schedule have been saved. The ViiLife team will contact you to coordinate access and confirm the visit details.'],actionUrl:await guestAccess.documentLink(tx,'contract',c),actionLabel:'Review my agreement'});
     await queueCommercialMail(tx,'contract:'+c.id+':accepted:customer',c.customer_email,{...customerMail,attachments:[pdfAttachment('contract',{...c,status:'accepted',acceptance})]});
     await queueCommercialMail(tx,'contract:'+c.id+':accepted:team',config.adminEmail,serviceMail({subject:'ViiLife agreement accepted · team notice',title:'Client acceptance received',paragraphs:[`${c.snapshot.customer.name} accepted the service agreement. Contact the client to coordinate the scheduled visits.`],details:[['Customer email',c.customer_email],['Agreement',c.id]],actionUrl:new URL('/equipo',origin).href,actionLabel:'Open team workspace'}));
     await tx.query('INSERT INTO team_notifications(id,user_id,body) VALUES($1,$2,$3)',[randomUUID(),c.seller_id,'A client accepted their service agreement. Coordinate the visits.']);return{ok:true};
   }));
-  route('POST',client+'/contracts/:id/decline',s.object({reason:s.str(1000,0)}),customerGuard,async r=>db.transaction(async tx=>{
+  route('POST',client+'/contracts/:id/decline',s.object({reason:s.str(1000,0)}),contractGuard,async r=>db.transaction(async tx=>{
     const c=await customerContract(tx,r.params.id,r.customer,true);if(c.status==='declined')return{ok:true};if(c.status!=='sent')fail(409,'Agreement cannot be declined at this stage.');
-    await tx.query("UPDATE service_contracts SET status='declined' WHERE id=$1",[c.id]);await event(tx,c,r.customer.id,'customer','declined',r.body);await tx.query('INSERT INTO team_notifications(id,user_id,body) VALUES($1,$2,$3)',[randomUUID(),c.seller_id,'A client requested a different agreement. Review the prospect.']);return{ok:true};
+    await tx.query("UPDATE service_contracts SET status='declined' WHERE id=$1",[c.id]);await event(tx,c,r.customer.actor_id||r.customer.id,'customer','declined',r.body);await tx.query('INSERT INTO team_notifications(id,user_id,body) VALUES($1,$2,$3)',[randomUUID(),c.seller_id,'A client requested a different agreement. Review the prospect.']);return{ok:true};
   }));
   route('GET',team+'/visits',null,teamGuard,async r=>({items:(await db.query('SELECT v.*,l.name AS client_name FROM service_visits v JOIN service_contracts c ON c.id=v.contract_id JOIN crm_leads l ON l.id=c.lead_id WHERE ($1::boolean OR l.owner_id=$2) ORDER BY v.service_date,v.id',[r.teamUser.role==='admin',r.teamUser.id])).rows.map(v=>({...v,service_date:iso(v.service_date),amount_minor:Number(v.amount_minor),discount_minor:Number(v.discount_minor)}))}));
   route('POST',team+'/visits/:id/status',s.object({status:s.choice(['completed','missed','cancelled'])}),adminGuard,async r=>db.transaction(async tx=>{
@@ -123,7 +125,7 @@ export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,cus
     await tx.query('INSERT INTO service_invoices(id,contract_id,number,customer_email,total_minor,discount_minor,period,snapshot,due_date,segment) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,c.id,number,c.customer_email,total,discount,r.body.period,JSON.stringify(snapshot),calendar.due_date,c.snapshot.segment]);
     for(const v of visits)await tx.query('UPDATE service_visits SET invoice_id=$2 WHERE id=$1',[v.id,id]);
     const invoice=await one(tx,'SELECT * FROM service_invoices WHERE id=$1',[id]);
-    await queueCommercialMail(tx,'invoice:'+id+':issued',c.customer_email,{...serviceMail({subject:'Your ViiLife service invoice',title:'Your service invoice is ready',paragraphs:[`Hello ${c.snapshot.customer.name},`,'Your service invoice is available in your VIICASA account.'],details:[['Invoice',number],['Amount',cash(total)],['Due date',calendar.due_date]],actionUrl:new URL('/cliente?invoice='+id,origin).href}),attachments:[pdfAttachment('invoice',invoice)]});
+    await queueCommercialMail(tx,'invoice:'+id+':issued',c.customer_email,{...serviceMail({subject:'Your ViiLife service invoice',title:'Your service invoice is ready',paragraphs:[`Hello ${c.snapshot.customer.name},`,'Your service invoice is available using the private link below. No account is required.'],details:[['Invoice',number],['Amount',cash(total)],['Due date',calendar.due_date]],actionUrl:await guestAccess.documentLink(tx,'invoice',invoice),actionLabel:'View my invoice'}),attachments:[pdfAttachment('invoice',invoice)]});
     await audit(tx,r.teamUser.id,'invoice.issue',id,{calendar});return{id,number,total_minor:total,due_date:calendar.due_date};
   }));
   const teamInvoice=async(tx,id,u)=>{const i=await one(tx,'SELECT * FROM service_invoices WHERE id=$1',[id]);if(!i)fail(404,'Invoice not found.');await ownedContract(tx,i.contract_id,u);return invoiceWithFinance(tx,i);};
@@ -131,10 +133,10 @@ export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,cus
   route('GET',team+'/invoices',null,teamGuard,async r=>({items:await Promise.all((await db.query('SELECT i.* FROM service_invoices i JOIN service_contracts c ON c.id=i.contract_id JOIN crm_leads l ON l.id=c.lead_id WHERE ($1::boolean OR l.owner_id=$2) ORDER BY i.issued_at DESC',[r.teamUser.role==='admin',r.teamUser.id])).rows.map(async i=>numInvoice(await invoiceWithFinance(db,i))))}));
   route('GET',client+'/invoices',null,customerGuard,async r=>({items:await Promise.all((await db.query('SELECT * FROM service_invoices WHERE customer_email=$1 ORDER BY issued_at DESC',[r.customer.email])).rows.map(async i=>numInvoice(await invoiceWithFinance(db,i))))}));
   route('GET',team+'/invoices/:id/print',null,teamGuard,async(r,reply)=>{const i=await db.transaction(tx=>teamInvoice(tx,r.params.id,r.teamUser));return reply.type('text/html').send(documentHtml(i.number,invoiceBody(i)));});
-  route('GET',client+'/invoices/:id/print',null,customerGuard,async(r,reply)=>reply.type('text/html').send(documentHtml('Service invoice',invoiceBody(await clientInvoice(db,r.params.id,r.customer)))));
+  route('GET',client+'/invoices/:id/print',null,invoiceGuard,async(r,reply)=>reply.type('text/html').send(documentHtml('Service invoice',invoiceBody(await clientInvoice(db,r.params.id,r.customer)))));
   route('GET',team+'/invoices/:id/pdf',null,teamGuard,async(r,reply)=>download(reply,'invoice',await db.transaction(tx=>teamInvoice(tx,r.params.id,r.teamUser))));
-  route('GET',client+'/invoices/:id/pdf',null,customerGuard,async(r,reply)=>download(reply,'invoice',await clientInvoice(db,r.params.id,r.customer)));
-  route('POST',client+'/invoices/:id/payment',s.object({}),customerGuard,async r=>{
+  route('GET',client+'/invoices/:id/pdf',null,invoiceGuard,async(r,reply)=>download(reply,'invoice',await clientInvoice(db,r.params.id,r.customer)));
+  route('POST',client+'/invoices/:id/payment',s.object({}),invoiceGuard,async r=>{
     const result=await db.transaction(async tx=>{
       await tx.query('SELECT pg_advisory_xact_lock(73182008)');
       const i=await one(tx,'SELECT * FROM service_invoices WHERE id=$1 AND customer_email=$2 FOR UPDATE',[r.params.id,r.customer.email]);if(!i)fail(404,'Invoice not found.');if(i.status!=='issued')fail(409,'Invoice no longer accepts payments.');
@@ -146,7 +148,7 @@ export async function registerAgreements(app,{db,origin,teamGuard,adminGuard,cus
       await tx.query("INSERT INTO service_invoice_payments(id,invoice_id,provider,status,amount_minor,currency,expires_at) VALUES($1,$2,$3,'creating',$4,'CAD',$5)",[payment.id,i.id,payment.provider,payment.amount_minor,payment.expires_at]);return{payment,invoice:i};
     });
     if(result.payment.reference)return{provider:gateway.provider,checkout_url:result.payment.checkout_url};
-    let session;try{session=await gateway.create(result.payment,result.invoice);}catch{fail(502,'Unable to prepare payment. Retry the same invoice.');}
+    let session;try{session=await gateway.create(result.payment,{...result.invoice,...(r.customer.guest?{guest_checkout:true}:{})});}catch{fail(502,'Unable to prepare payment. Retry the same invoice.');}
     await db.query("UPDATE service_invoice_payments SET reference=$2,checkout_url=$3,status=CASE WHEN status='creating' THEN 'open' ELSE status END WHERE id=$1",[result.payment.id,session.reference,session.url]);return{provider:gateway.provider,checkout_url:session.url};
   });
   route('POST',team+'/invoices/:id/simulate-payment',s.object({}),adminGuard,async r=>{
@@ -193,7 +195,7 @@ export async function settleInvoiceInTransaction(tx,config,origin,event){
       if(recordedSale?.service_invoice_id!==i.id)await audit(tx,null,'commission.invoice_link_review',i.id,{reference:i.number});
     }
     const paidInvoice=await invoiceWithFinance(tx,await one(tx,'SELECT * FROM service_invoices WHERE id=$1',[i.id]));
-    await queueCommercialMail(tx,'invoice:'+i.id+':paid:customer',i.customer_email,{...serviceMail({subject:'Your ViiLife payment confirmation',title:'Payment recorded',paragraphs:[`Thank you, ${i.snapshot.customer.name}.`,'Your payment has been recorded in the Phase 2 test environment. View your invoice and service details in your account.'],details:[['Invoice',i.number],['Amount',cash(amount)]],actionUrl:new URL('/cliente?invoice='+i.id,origin).href}),attachments:[pdfAttachment('invoice',paidInvoice)]});
+    await queueCommercialMail(tx,'invoice:'+i.id+':paid:customer',i.customer_email,{...serviceMail({subject:'Your ViiLife payment confirmation',title:'Payment recorded',paragraphs:[`Thank you, ${i.snapshot.customer.name}.`,'Your payment has been recorded in the Phase 2 test environment. View your invoice using the private link below. No account is required.'],details:[['Invoice',i.number],['Amount',cash(amount)]],actionUrl:config.guestDocumentLink?await config.guestDocumentLink(tx,'invoice',i):new URL('/cliente?invoice='+i.id,origin).href,actionLabel:'View my invoice'}),attachments:[pdfAttachment('invoice',paidInvoice)]});
     await queueCommercialMail(tx,'invoice:'+i.id+':paid:team',config.adminEmail,serviceMail({subject:'ViiLife payment recorded · team notice',title:'Service invoice paid',paragraphs:['A service invoice was paid.'],details:[['Customer',i.customer_email],['Invoice',i.number],['Amount',cash(amount)]],actionUrl:new URL('/equipo',origin).href}));
     await audit(tx,null,'invoice.paid',i.id);return{received:true};
 }

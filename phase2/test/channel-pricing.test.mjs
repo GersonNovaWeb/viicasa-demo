@@ -15,7 +15,8 @@ test('channel pricing is admin-only; quotes do not hold stock and accepted check
   assert.equal((await put(policy,f.seller.cookie)).statusCode,403);assert.equal((await put({...policy,taxes:null})).statusCode,409);assert.equal((await put(policy)).statusCode,200);assert.equal((await put(policy)).statusCode,409);
   const publicPolicy=(await f.call('/api/shop-channel/pricing')).json();assert.equal(publicPolicy.discounts,undefined);
   await f.post('/api/commercial/shop-channel/examples',{confirm:true});const v=(await f.call('/api/shop-channel/catalogue')).json().items[0].variants[0],buyer=await f.customer(),other=await f.customer('other-module@example.invalid');
-  const input={lines:[{variant_id:v.id,quantity:2}],shipping_option:'standard',discount_code:'EXAMPLE',pricing_revision:1};assert.equal((await f.post('/api/client/shop-channel/quote',input,null)).statusCode,401);
+  // Public price review is intentional: guest checkout must not require login.
+  const input={lines:[{variant_id:v.id,quantity:2}],shipping_option:'standard',discount_code:'EXAMPLE',pricing_revision:1};assert.equal((await f.post('/api/client/shop-channel/quote',input,null)).statusCode,200);
   const preview=await f.post('/api/client/shop-channel/quote',input,buyer);assert.equal(preview.statusCode,200,preview.body);assert.equal((await f.db.query('SELECT count(*)::integer AS n FROM channel_holds')).rows[0].n,0);
   const body={...input,idempotency_key:randomUUID(),consent:true,expected_total_minor:preview.json().breakdown.total_minor},created=await f.post('/api/client/shop-channel/checkouts',body,buyer);assert.equal(created.statusCode,200,created.body);const id=created.json().id,frozen=(await f.db.query('SELECT snapshot FROM channel_checkouts WHERE id=$1',[id])).rows[0].snapshot;
   assert.equal((await put({...policy,revision:1,shipping_options:[{...policy.shipping_options[0],amount_minor:2000}]})).statusCode,200);

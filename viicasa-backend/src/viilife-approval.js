@@ -4,9 +4,10 @@ import {enqueue} from './firestore-commerce.js';
 import {renderViiLifeMail} from './viilife-mail.js';
 
 export async function approvalNotice(tx,checkout,event,config){
+  const guestActionUrl=config.guestOrderLink?await config.guestOrderLink(tx,checkout):null;
   const audiences=event==='approval_requested'?['customer','team']:['customer'];
   for(const audience of audiences){
-    const actionUrl=new URL(audience==='team'?'/admin':'/cuenta#viilife-orders',config.siteUrl).href;
+    const actionUrl=audience==='customer'&&guestActionUrl?guestActionUrl:new URL(audience==='team'?'/admin':'/cuenta#viilife-orders',config.siteUrl).href;
     const mail=renderViiLifeMail({reference:checkout.id,issuedAt:now(),customer:{name:checkout.customer_name,email:checkout.customer_email,phone:checkout.customer_phone},...checkout.detail,event,audience,actionUrl});
     await enqueue(tx,`viilife-approval:${checkout.id}:${event}:${audience}`,audience==='team'?config.adminEmail:checkout.customer_email,mail.subject,mail.body,mail.html);
   }

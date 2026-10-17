@@ -151,6 +151,7 @@ export async function enqueue(tx,dedupe,recipient,subject,body,html,receipt){
   tx.create('mail_outbox',mailId,{recipient,subject,body,...(html?{html}:{}),...(receipt?{receipt}:{}),status:'pending',attempts:0,next_attempt:now(),created_at:now(),lease_token:null});
 }
 export async function notice(tx,c,status,config){
+  const guestActionUrl=config.guestOrderLink?await config.guestOrderLink(tx,c):null;
   if(c.kind==='cleaning'){
     const event={'confirmado':'paid','pago recibido en revisión':'review','pago rechazado':'failed','pago vencido':'expired','cancelada':'cancelled'}[status]||'requested';
     const demo=config.paymentProvider==='demo';
@@ -158,14 +159,14 @@ export async function notice(tx,c,status,config){
     for(const audience of ['paid','review'].includes(event)?['customer','team']:['customer']){
       const input={reference:c.id,issuedAt:now(),customer:{name:c.customer_name,email:c.customer_email,phone:c.customer_phone},selection:c.detail.selection,quote:c.detail.quote,schedule:c.detail.schedule,address:c.detail.address,event,demo,paymentTest,audience,paidMinor:c.due_minor};
       const receipt=audience==='customer'&&!demo&&['paid','review'].includes(event)?receiptSnapshot(input):null;
-      const mail=renderViiLifeMail(input);
+      const mail=renderViiLifeMail({...input,...(guestActionUrl?{actionUrl:audience==='team'?new URL('/admin',config.siteUrl).href:guestActionUrl}:{})});
       await enqueue(tx,`${c.id}:${status}:${audience==='team'?'admin':'customer'}`,audience==='team'?config.adminEmail:c.customer_email,mail.subject,mail.body,mail.html,receipt);
     }
     return;
   }
   const event=purchaseEvent(status);
   for(const audience of ['customer','team']){
-    const mail=renderPurchaseMail(c,event,config,audience);
+    const mail=renderPurchaseMail(c,event,{...config,guestActionUrl},audience);
     const receipt=audience==='customer'&&config.paymentProvider!=='demo'&&['paid','review'].includes(event)?commerceReceiptSnapshot(c,event,config):null;
     await enqueue(tx,`${c.id}:${status}:${audience==='team'?'admin':'customer'}`,audience==='team'?config.adminEmail:c.customer_email,mail.subject,mail.body,mail.html,receipt);
   }

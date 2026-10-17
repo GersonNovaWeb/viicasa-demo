@@ -23,6 +23,6 @@ export function invoiceGateway(config,{stripe,advanced=false}={}){
     create:async(p,i)=>{
     const session=await api.checkout.sessions.create({mode:'payment',payment_method_types:['card'],adaptive_pricing:{enabled:false},customer_email:i.customer_email,client_reference_id:i.id,
       metadata:{phase2_invoice_id:i.id,phase2_payment_id:p.id},line_items:[{quantity:1,price_data:{currency:'cad',unit_amount:p.amount_minor,product_data:{name:'ViiLife · Invoice '+i.number}}}],expires_at:Math.floor(new Date(p.expires_at).getTime()/1000),
-      success_url:new URL('/cliente?invoice='+i.id+'&payment=success',config.siteUrl).href,cancel_url:new URL('/cliente?invoice='+i.id,config.siteUrl).href},{idempotencyKey:'phase2-invoice-'+p.id});return{reference:session.id,url:session.url};
+      success_url:new URL(i.guest_checkout?'/pedido?reference='+i.id:'/cliente?invoice='+i.id+'&payment=success',config.siteUrl).href,cancel_url:new URL(i.guest_checkout?'/pedido?reference='+i.id:'/cliente?invoice='+i.id,config.siteUrl).href},{idempotencyKey:'phase2-invoice-'+p.id});return{reference:session.id,url:session.url};
     },verify:(raw,signature)=>{try{return api.webhooks.constructEvent(raw,signature,config.stripeWebhookSecret);}catch{fail(400,'Invalid Stripe webhook signature.');}}};
 }

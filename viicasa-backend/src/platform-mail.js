@@ -65,7 +65,7 @@ export function renderPurchaseMail(c,event,config,audience='customer'){
     paragraphs:audience==='team'?[`A ${m.brand} order has been updated. Review the order in your administrator dashboard.`,m.paid?m.next:'This update does not confirm a successful payment. Do not fulfil an unpaid order.']:m.paragraphs,
     details:[['Status',m.status],...m.details],lines:m.lines,currency:m.currency,summary:m.summary,
     testNote:m.test?'TEST TRANSACTION - No real money was charged. This is not a tax receipt or confirmation of a real delivery or stay.':null,
-    actionUrl:audience==='team'?new URL('/admin',accountMailUrl(config.siteUrl)).href:accountMailUrl(config.siteUrl),actionLabel:audience==='team'?'Review order':'View my orders'});
+    actionUrl:audience==='team'?new URL('/admin',accountMailUrl(config.siteUrl)).href:config.guestActionUrl||accountMailUrl(config.siteUrl),actionLabel:audience==='team'?'Review order':'View my orders'});
 }
 export function commerceReceiptSnapshot(c,event,config){
   const m=purchaseMailData(c,event,config);

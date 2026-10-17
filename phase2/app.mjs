@@ -41,6 +41,8 @@ import {runtimeProfile} from './runtime-profile.mjs';
 import {registerReleaseInspection} from './release-inspection.mjs';
 import {registerStayProviderOperations} from './stay-provider-operations.mjs';
 import {registerServiceCatalogue} from './service-catalogue.mjs';
+import {guestCheckout} from './guest-checkout.mjs';
+import {paymentGateway} from '../viicasa-backend/src/payments.js';
 
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3030',testing=false,stripeKey,stripeWebhookSecret,mailMode='outbox',smtp={},mailFrom='VIICASA Demo <accounts@example.invalid>',adminEmail='team@example.invalid',serviceGateway,connectionEnvironment={},identityGateway,providerGateways={},mode='demo'}={}){
@@ -51,7 +53,8 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
   const config=configFromEnv({DATABASE_DRIVER:'firestore',FIREBASE_MODE:'emulator',FIREBASE_PROJECT_ID:'demo-viicasa-phase2',FIRESTORE_EMULATOR_HOST:'127.0.0.1:8080',PUBLIC_SITE_URL:origin,ALLOWED_ORIGINS:origin,PAYMENT_PROVIDER:stripeKey?'stripe':'demo',STRIPE_MODE:'test',STRIPE_SECRET_KEY:stripeKey,STRIPE_WEBHOOK_SECRET:stripeWebhookSecret,MAIL_MODE:mailMode,MAIL_FROM:mailFrom,SMTP_HOST:smtp.host,SMTP_PORT:String(smtp.port||587),SMTP_USER:smtp.user,SMTP_PASSWORD:smtp.password,SMTP_SECURE:String(smtp.secure||false),ADMIN_EMAIL:adminEmail,VIILIFE_MODE:'live',MEDIA_DIR:resolve(root,'data/phase2-media')});
   if(!profile.simulations&&!stripeKey)config.paymentProvider='disabled';
   if(profile.mode==='staging')config.mediaDir=resolve(root,'data/phase2-staging-media');
-  const base=await buildFirestoreApp(config,{store,logger:false,testing});
+  const platformPayments=providerGateways.platformPayments||paymentGateway(config);
+  const base=await buildFirestoreApp(config,{store,logger:false,testing,gateway:platformPayments});
   const app=Fastify({logger:false,bodyLimit:9*1024*1024,ajv:{customOptions:{removeAdditional:false}}});
   app.addContentTypeParser('multipart/form-data',{parseAs:'buffer'},(_,body,done)=>done(null,body));
   app.setErrorHandler((error,req,reply)=>{const status=error.validation?400:error.statusCode||(['23505','23503','22P02'].includes(error.code)?409:500);reply.code(status).send({error:status<500?error.validation?'Invalid form values.':error.message:'Unable to complete this operation.'});});
@@ -68,15 +71,16 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
   registerMeasurement(app,{db:databases.commercial,store,origin,adminGuard:guards.adminGuard});
   const analytics=providerGateways.analytics||analyticsGateway(connectionEnvironment,{origin}),analyticsOperations=registerExternalAnalytics(app,{db:databases.commercial,adminGuard:guards.adminGuard,gateway:analytics});
   const {customerGuard}=await registerCustomers(app,{db:databases.commercial,origin});
-  await registerServiceCatalogue(app,{db:databases.commercial,store,adminGuard:guards.adminGuard,customerGuard,config,origin});
-  const shopify=providerGateways.shopify||shopifyGateway(connectionEnvironment),shopifyOperations=registerShopifyOperations(app,{db:databases.commercial,gateway:shopify,config,origin,vault,adminGuard:guards.adminGuard,customerGuard});
+  const guestAccess=guestCheckout({app,db:databases.commercial,store,vault,origin,config,customerGuard,gateway:platformPayments});
+  await registerServiceCatalogue(app,{db:databases.commercial,store,adminGuard:guards.adminGuard,customerGuard,config,origin,guestAccess});
+  const shopify=providerGateways.shopify||shopifyGateway(connectionEnvironment),shopifyOperations=registerShopifyOperations(app,{db:databases.commercial,gateway:shopify,config,origin,vault,adminGuard:guards.adminGuard,customerGuard,guestAccess});
   config.stayMailEnabled=connectionEnvironment.PHASE2_STAY_MAIL_APPROVED==='true';
   config.runtimeMode=profile.mode;
   const stayOperations=registerStayProviderOperations(app,{db:databases.commercial,adminGuard:guards.adminGuard,gateways:providerGateways.stays||{},approved:connectionEnvironment.PHASE2_STAY_CONNECTOR_APPROVED==='true',mailApproved:config.stayMailEnabled});
   const customerIdentity=await registerCustomerSocial(app,{db:databases.commercial,vault,origin,environment:connectionEnvironment,customerGuard,gateway:identityGateway,testing});
   const servicePayments=serviceGateway||invoiceGateway(config,{advanced:connectionEnvironment.PHASE2_STRIPE_ADVANCED==='true'});
   const stripeAdvanced=registerStripeAdvanced(app,{db:databases.commercial,gateway:servicePayments,origin,config,customerGuard,adminGuard:guards.adminGuard,autoCollect:connectionEnvironment.PHASE2_STRIPE_AUTO_COLLECT==='true'});
-  const serviceOperations=await registerAgreements(app,{db:databases.commercial,origin,teamGuard:guards.userGuard,adminGuard:guards.adminGuard,customerGuard,config,gateway:servicePayments});
+  const serviceOperations=await registerAgreements(app,{db:databases.commercial,origin,teamGuard:guards.userGuard,adminGuard:guards.adminGuard,customerGuard,config,gateway:servicePayments,guestAccess});
   registerFinancialAdjustments(app,{db:databases.commercial,origin,teamGuard:guards.userGuard,adminGuard:guards.adminGuard,customerGuard,config,gateway:servicePayments});
   await registerCommissionAdjustments(app,{db:databases.commercial,userGuard:guards.userGuard,adminGuard:guards.adminGuard});
   await registerServiceOperations(app,{db:databases.commercial,origin,teamGuard:guards.userGuard,adminGuard:guards.adminGuard,customerGuard,config});
@@ -89,7 +93,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     sourceRevision:await runtimeSourceRevision(root),adapterStatus:{stripe_recurring:stripeAdvanced.enabled,stripe_refund:stripeAdvanced.enabled,shopify:shopify.enabled,stay:stayOperations.enabled,analytics:analytics.providers.length>0||Boolean(analytics.gtm)}});
   registerLaunchReadiness(app,{db:databases.commercial,adminGuard:guards.adminGuard,runtime:launchRuntime});registerReleaseInspection(app,{databases,adminGuard:guards.adminGuard,runtime:launchRuntime});
   await registerStays(app,{db:databases.commercial,adminGuard:guards.adminGuard,customerGuard,seedExamples:profile.seedExamples,mailApproved:config.stayMailEnabled,adminEmail:config.adminEmail});
-  await registerShopChannel(app,{db:databases.commercial,adminGuard:guards.adminGuard,customerGuard,config,origin});
+  await registerShopChannel(app,{db:databases.commercial,adminGuard:guards.adminGuard,customerGuard,config,origin,guestAccess});
   const guest=async(req,reply)=>{
     const clientSecret=cookieValue(req,'vc2_client'),customer=await authenticatedCustomer(databases.commercial,clientSecret);
     if(customer){
@@ -105,7 +109,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
       reply.header('Set-Cookie',`vc2_guest=${secret}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure?'; Secure':''}`);
     }return{secret,row:g};
   };
-  app.get('/api/config',async()=>({demo:profile.mode==='demo',phase:2,runtimeMode:profile.mode,paymentMode:'test',productionEnabled:false,simulationsEnabled:profile.simulations,customerLoginUrl:'/cliente',viilifeMode:'live',country:'CA',suggestedCurrency:'CAD',geoAvailable:false,commerceEnabled:true,payment:config.paymentProvider,googleEnabled:customerIdentity.availability().google.enabled,authProviders:{google:customerIdentity.availability().google.enabled,apple:customerIdentity.availability().apple.enabled,email:true,facebook:false},firebase:null}));
+  app.get('/api/config',async()=>({demo:profile.mode==='demo',phase:2,runtimeMode:profile.mode,guestCheckoutEnabled:true,paymentMode:'test',productionEnabled:false,simulationsEnabled:profile.simulations,customerLoginUrl:'/cliente',viilifeMode:'live',country:'CA',suggestedCurrency:'CAD',geoAvailable:false,commerceEnabled:true,payment:config.paymentProvider,googleEnabled:customerIdentity.availability().google.enabled,authProviders:{google:customerIdentity.availability().google.enabled,apple:customerIdentity.availability().apple.enabled,email:true,facebook:false},firebase:null}));
   const proxy=async(req,reply)=>{
     if(!['GET','HEAD'].includes(req.method)&&req.url!=='/v1/webhooks/stripe'&&req.headers.origin!==origin)fail(403,'Request origin is not allowed.');
     if(req.url==='/api/auth/logout'&&req.method==='POST'){
@@ -130,7 +134,13 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     const target=req.url.replace(/^\/api/,'/v1');
     if(!/^\/v1\/(products|properties|shop\/settings|cart|bookings|orders|checkouts|admin|cleaning|viilife|viilife-demo|inquiries|media|webhooks\/stripe)([/?]|$)/.test(target))fail(404,'Route not found.');
     if(g.customer&&['/api/orders','/api/bookings','/api/viilife/requests','/api/cleaning/requests'].includes(req.url)&&req.body?.customer)req.body.customer.email=g.customer.email;
+    const paying=/^\/api\/checkouts\/([a-f0-9-]{36})\/payment$/.exec(req.url);
+    if(paying&&req.method==='POST'&&!g.customer){const c=await store.get('checkouts',paying[1]);if(c?.guest_id===g.row.id)await guestAccess.sessionForCheckout(reply,c.id,3600);}
     const response=await base.inject({method:req.method,url:target,headers:{authorization:'Bearer '+secret,...(req.headers['idempotency-key']?{'idempotency-key':req.headers['idempotency-key']}:{}),...(Buffer.isBuffer(req.body)?{'content-type':req.headers['content-type']}:{})},payload:req.body});
+    if(!g.customer&&response.statusCode<300&&req.method==='POST'&&['/api/orders','/api/bookings','/api/viilife/requests','/api/cleaning/requests'].includes(req.url)){
+      const data=response.json(),id=data.checkout?.id||(data.kind?data.id:null);
+      if(id)await store.transaction(async tx=>{const c=await tx.get('checkouts',id);if(!c||c.guest_id!==g.row.id)return;const actionUrl=await guestAccess.platformLink(tx,c);const {enqueue}=await import('../viicasa-backend/src/firestore-commerce.js');const {brandedMail}=await import('../viicasa-backend/src/platform-mail.js');const mail=brandedMail({testNote:config.paymentProvider==='demo'?'Phase 2 demonstration. No real payment or delivery.':'Stripe sandbox review. This is not a payment receipt. No real money is charged.',subject:'VIICASA · Your private order link',title:'Your order, without an account',paragraphs:[`Hello ${c.customer_name},`,'Use this private link to review this order and complete payment when available. Creating an account is optional. Do not forward this link.'],actionUrl,actionLabel:'View my order'});await enqueue(tx,'guest-access:'+id,c.customer_email,mail.subject,mail.body,mail.html);});
+    }
     reply.code(response.statusCode).type(response.headers['content-type']||'application/json');return response.rawPayload;
   };
   for(const method of ['GET','POST','PUT','PATCH','DELETE'])app.route({method,url:'/api/*',handler:proxy});
@@ -184,6 +194,9 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     if(relative){/* The explicit team routes above take precedence over the public site. */}
     else if(pathname==='/'||pathname==='/fase2')relative='phase2/public/index.html';
     else if(pathname==='/cliente')relative='phase2/public/customer.html';
+    else if(pathname==='/pedido')relative='phase2/public/guest-order.html';
+    else if(pathname==='/solicitar')relative='phase2/public/guest-request.html';
+    else if(['/guest-order.js','/guest-buyer.js','/guest-request.js','/guest-checkout.css'].includes(pathname))relative='phase2/public'+pathname;
     else if(/^\/servicios(?:\/[a-z0-9-]+)?$/.test(pathname))relative='phase2/public/service-catalogue.html';
     else if(['/service-catalogue.js','/service-catalogue.css','/catalogue-workspace.js'].includes(pathname))relative='phase2/public'+pathname;
     else if(/^\/shop-channel\/[a-z0-9-]+$/.test(pathname))relative='phase2/public/shop-channel.html';
@@ -195,9 +208,10 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     const file=resolve(root,relative);
     if(!file.startsWith(root+sep))fail(404,'Not found.');
     try{let body=await readFile(file);if(portalRole)body=Buffer.from(body.toString().replace('<body>',`<body data-team-portal="${portalRole}">`).replace('Team workspace',portalRole==='admin'?'Administration':portalRole==='seller'?'Sales workspace':'Team workspace'));
-      if(relative.endsWith('.html'))body=Buffer.from(body.toString().replace('</head>','<script type="module" src="/runtime-presentation.js"></script></head>'));
+      if(relative.endsWith('.html')&&!portalRole)body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/guest-checkout.css"></head>'));
+      if(relative.endsWith('.html')&&pathname!=='/pedido')body=Buffer.from(body.toString().replace('</head>','<script type="module" src="/runtime-presentation.js"></script></head>'));
       if(relative==='viicasa-frontend-prototype/index.html')body=Buffer.from(body.toString().replace('<body>','<body><a class="phase2-link" href="/equipo" style="position:fixed;bottom:8px;right:16px;z-index:40;background:#243d34;color:#fff;padding:8px 16px;border-radius:20px;font:12px Arial">Phase 2 · Team portal</a>'));
-      if(relative.endsWith('.html')&&!portalRole&&pathname!=='/admin/plataforma')body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/consent.css"><script type="module" src="/consent.js"></script></head>'));
+      if(relative.endsWith('.html')&&!portalRole&&!['/admin/plataforma','/pedido'].includes(pathname))body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/consent.css"><script type="module" src="/consent.js"></script></head>'));
       reply.type(types[extname(file)]||'application/octet-stream').header('Cache-Control','no-store');return body;
     }catch{fail(404,'Not found.');}
   });

@@ -446,6 +446,28 @@ export async function openPhase2Databases(directory,{memory=false,driver='pglite
     CREATE TABLE IF NOT EXISTS service_catalogue (
       id text PRIMARY KEY,revision integer NOT NULL DEFAULT 1 CHECK(revision>0),content jsonb NOT NULL,
       updated_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS guest_buyers (
+      id uuid PRIMARY KEY,token_hash text NOT NULL UNIQUE,expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS guest_order_links (
+      kind text NOT NULL CHECK(kind IN ('channel','enquiry','shopify','contract','invoice')),resource_id uuid NOT NULL,
+      owner_ref text NOT NULL,email text NOT NULL,token_hash text NOT NULL UNIQUE,secret_cipher text NOT NULL,
+      expires_at timestamptz NOT NULL,PRIMARY KEY(kind,resource_id));
+    CREATE TABLE IF NOT EXISTS guest_order_grants (
+      token_hash text PRIMARY KEY,kind text NOT NULL,resource_id uuid NOT NULL,expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now());
+    ALTER TABLE channel_checkouts ALTER COLUMN customer_id DROP NOT NULL;
+    ALTER TABLE channel_checkouts ADD COLUMN IF NOT EXISTS buyer_ref text;
+    UPDATE channel_checkouts SET buyer_ref='customer:'||customer_id::text WHERE buyer_ref IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS channel_buyer_request ON channel_checkouts(buyer_ref,idempotency_key);
+    ALTER TABLE client_service_requests ALTER COLUMN customer_id DROP NOT NULL;
+    ALTER TABLE client_service_requests ADD COLUMN IF NOT EXISTS buyer_ref text;
+    UPDATE client_service_requests SET buyer_ref='customer:'||customer_id::text WHERE buyer_ref IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS enquiry_buyer_request ON client_service_requests(buyer_ref,idempotency_key);
+    ALTER TABLE shopify_carts ALTER COLUMN customer_id DROP NOT NULL;
+    ALTER TABLE shopify_carts ADD COLUMN IF NOT EXISTS buyer_ref text;
+    UPDATE shopify_carts SET buyer_ref='customer:'||customer_id::text WHERE buyer_ref IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS shopify_buyer_request ON shopify_carts(buyer_ref,request_key);
   `);});
   await platform.transaction(async tx=>{if(driver==='postgres')await tx.query('SELECT pg_advisory_xact_lock(73182002)');await tx.exec('CREATE TABLE IF NOT EXISTS demo_documents(collection text NOT NULL, id text NOT NULL, body jsonb NOT NULL, PRIMARY KEY(collection,id));');});
   return {commercial,platform,driver,store:documentStore(platform),close:()=>Promise.all([commercial.close(),platform.close()])};
