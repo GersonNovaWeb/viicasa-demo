@@ -53,7 +53,7 @@ const photo=(p,cls='')=>photos(p).length?`<img class="${cls}" src="${esc(photos(
 function banner(){return settings.demo?`<div class="demo-banner">${L('ENTORNO DE DEMOSTRACIÓN · Propiedades, precios y productos ficticios. Sin cobros reales.','DEMONSTRATION ENVIRONMENT · Fictional properties, prices and products. No real charges.')}</div>`:'';}
 function navigation(){
   setMobileMenu(false);
-  $('.wordmark').href='/';$('#navigation').innerHTML=`<a href="/propiedades" ${location.pathname.startsWith('/propiedades')||location.pathname.startsWith('/viiconcierge/')?'aria-current="page"':''}>${L('Propiedades','Properties')}</a><a href="/shop">ViiShop</a><a href="/viiconcierge">ViiConcierge</a><a href="/viilife">ViiLife</a>`;
+  $('.wordmark').href='/';$('#navigation').innerHTML=`<a href="/" ${location.pathname==='/'?'aria-current="page"':''}>Vii</a><a href="/propiedades" ${location.pathname.startsWith('/propiedades')||location.pathname.startsWith('/viiconcierge/')?'aria-current="page"':''}>${L('Propiedades','Properties')}</a><a href="/shop">ViiShop</a><a href="/viiconcierge">ViiConcierge</a><a href="/viilife">ViiLife</a>`;
   $('#account').textContent=L('Mi cuenta','My account');$('#account').onclick=()=>location.href='/cuenta';
   document.querySelectorAll('[data-language]').forEach(b=>{b.setAttribute('aria-pressed',b.dataset.language===lang);b.onclick=()=>{try{localStorage.setItem('viicasa-prototype-language',b.dataset.language);}catch{}location.reload();};});
   document.documentElement.lang=lang;

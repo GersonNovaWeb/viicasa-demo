@@ -195,6 +195,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     }
     if(relative){/* The explicit team routes above take precedence over the public site. */}
     else if(pathname==='/')relative='viicasa-frontend-prototype/index.html';
+    else if(pathname==='/assets/logo-email.png')relative='viicasa-backend/assets/logo-email.png';
     else if(pathname==='/fase2')relative='phase2/public/index.html';
     else if(pathname==='/cliente')relative='phase2/public/customer.html';
     else if(pathname==='/pedido')relative='phase2/public/guest-order.html';
@@ -212,6 +213,10 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     if(!file.startsWith(root+sep))fail(404,'Not found.');
     try{let body=await readFile(file);if(portalRole)body=Buffer.from(body.toString().replace('<body>',`<body data-team-portal="${portalRole}">`).replace('Team workspace',portalRole==='admin'?'Administration':portalRole==='seller'?'Sales workspace':'Team workspace'));
       if(relative.endsWith('.html')&&!portalRole)body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/guest-checkout.css"></head>'));
+      // Public Phase 2 storefront only. Never retheme the team portal or private order.
+      if((relative==='viicasa-frontend-prototype/index.html'&&pathname!=='/admin/plataforma')||relative==='phase2/public/service-catalogue.html'){
+        body=Buffer.from(body.toString().replace('<html ','<html data-vii-glass ').replace('</head>','<link rel="stylesheet" href="/liquid-glass.css"></head>'));
+      }
       if(relative.endsWith('.html')&&pathname!=='/pedido')body=Buffer.from(body.toString().replace('</head>','<script type="module" src="/runtime-presentation.js"></script></head>'));
       if(relative==='viicasa-frontend-prototype/index.html')body=Buffer.from(body.toString().replace('<body>','<body><a class="phase2-link" href="/equipo" style="position:fixed;bottom:8px;right:16px;z-index:40;background:#243d34;color:#fff;padding:8px 16px;border-radius:20px;font:12px Arial">Phase 2 · Team portal</a>'));
       if(relative.endsWith('.html')&&!portalRole&&!['/admin/plataforma','/pedido'].includes(pathname))body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/consent.css"><script type="module" src="/consent.js"></script></head>'));

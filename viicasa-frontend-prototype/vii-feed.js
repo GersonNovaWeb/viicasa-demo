@@ -1,5 +1,6 @@
 // The same published catalogue powers the mixed home and all three brand feeds.
-export const brandPath={shop:'/shop',viilife:'/viilife',viiconcierge:'/viiconcierge'};
+import {installFeedControls} from './feed-controls.js';
+export const brandPath={home:'/',shop:'/shop',viilife:'/viilife',viiconcierge:'/viiconcierge'};
 export const interleave=groups=>Array.from({length:Math.max(0,...groups.map(x=>x.length))},(_,i)=>groups.map(x=>x[i]).filter(Boolean)).flat();
 export function filterTiles(items,{q='',category='',available=false,sort='recommended'}={}){
   const needle=q.trim().toLocaleLowerCase();
@@ -23,7 +24,7 @@ export async function renderViiFeed({api,frame,L,esc,money,settings,lang}){
   frame('<section class="vii-feed-shell">'+(brand?'<button class="vii-search" id="intent-open"><span>⌕</span> '+(brand==='viiconcierge'?L('¿A dónde?','Where to?'):L('Buscar en ','Search ')+{shop:'ViiShop',viilife:'ViiLife'}[brand])+'</button>':'')+'<div class="vii-tiles" id="vii-tiles"></div><p id="feed-result" role="status"></p></section>');
   document.body.classList.add('vii-experience');document.body.dataset.viiBrand=brand||'home';
   document.querySelector('.vii-feed-shell').insertAdjacentHTML('afterbegin','<h1 class="vii-sr-only">'+(brand?{shop:'ViiShop',viilife:'ViiLife',viiconcierge:'ViiConcierge'}[brand]:'Vii · The art of being home')+'</h1>');
-  document.querySelector('#navigation').innerHTML=Object.entries(brandPath).map(([key,path])=>'<a href="'+path+'" '+(brand===key?'aria-current="page"':'')+'>'+{shop:'ViiShop',viilife:'ViiLife',viiconcierge:'ViiConcierge'}[key]+'</a>').join('');
+  document.querySelector('#navigation').innerHTML=Object.entries(brandPath).map(([key,path])=>'<a href="'+path+'" '+((brand||'home')===key?'aria-current="page"':'')+'>'+{home:'Vii',shop:'ViiShop',viilife:'ViiLife',viiconcierge:'ViiConcierge'}[key]+'</a>').join('');
   const feed=document.querySelector('#feed');feed.classList.add('vii-scroller');
   let liked=new Set(),signedIn=false;try{liked=new Set((await api('/client/likes')).items.map(x=>x.item_key));signedIn=true;}catch{/* Guest likes invite sign-in; never pretend they were persisted. */}
   const likesOnly=new URLSearchParams(location.search).get('likes')==='1';
@@ -54,6 +55,6 @@ export async function renderViiFeed({api,frame,L,esc,money,settings,lang}){
       panel.querySelector('form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);filters={q:String(f.get('q')),category:String(f.get('category')),sort:String(f.get('sort')),available:f.has('available')};if(filters.q){try{sessionStorage.setItem('vii-recent:'+brand,JSON.stringify([filters.q,...recent.filter(x=>x!==filters.q)].slice(0,5)));}catch{}}draw();button.textContent=[filters.q,filters.category].filter(Boolean).join(' · ')||L('Buscar','Search');panel.close();};
     };
   }
-  let previous=0,queued=false;feed.addEventListener('scroll',()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{const current=feed.scrollTop;document.body.classList.toggle('vii-scrolling-down',current>previous+3&&current>160);previous=current;queued=false;});},{passive:true});
-  document.querySelector('#navigation')?.querySelectorAll('a').forEach(a=>a.setAttribute('aria-current',a.getAttribute('href')===brandPath[brand]?'page':'false'));
+  installFeedControls(feed,document.body);
+  document.querySelector('#navigation')?.querySelectorAll('a').forEach(a=>a.setAttribute('aria-current',a.getAttribute('href')===brandPath[brand||'home']?'page':'false'));
 }

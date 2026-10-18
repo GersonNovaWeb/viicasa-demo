@@ -5,7 +5,8 @@ import {openPhase2Databases} from '../database.mjs';
 import {seedPhase2} from '../bootstrap.mjs';
 import {buildPhase2App} from '../app.mjs';
 import {secretVault} from '../security.mjs';
-import {filterTiles,interleave} from '../../viicasa-frontend-prototype/vii-feed.js';
+import {filterTiles,interleave,brandPath} from '../../viicasa-frontend-prototype/vii-feed.js';
+import {readFile} from 'node:fs/promises';
 import {reconcilePayment} from '../../viicasa-backend/src/firestore-payments.js';
 
 test('mixed feed preserves brand rhythm, filters honestly and sorts unknown prices last',()=>{
@@ -14,6 +15,7 @@ test('mixed feed preserves brand rhythm, filters honestly and sorts unknown pric
   assert.deepEqual(filterTiles(items,{q:' linen ',sort:'price'}).map(x=>x.title),['Towels','Linen']);
   assert.equal(filterTiles(items,{category:'Care',available:true}).length,1);
   assert.equal(filterTiles(items,{q:'not published'}).length,0);
+  assert.equal(brandPath.home,'/');
 });
 test('reconciliation rejects a different guest before accessing Stripe',async()=>{
   let calls=0;await assert.rejects(reconcilePayment({get:async()=>({guest_id:'owner'})},{},{retrieve:()=>{calls++;}},'other','id'),e=>e.statusCode===404);assert.equal(calls,0);
@@ -26,6 +28,16 @@ test('published UX + guest checkout + verified Stripe return + domestic shipping
   const cookieOf=r=>[].concat(r.headers['set-cookie']||[]).map(x=>x.split(';')[0]).join('; ');
   const call=(url,method='GET',payload,cookie)=>app.inject({url,method,payload,headers:{origin,...(cookie?{cookie}:{}),'idempotency-key':randomUUID()}});
   const home=await call('/');assert.equal(home.statusCode,200);assert.match(home.body,/platform.js/);assert.doesNotMatch(home.body,/Phase 2 preview/);
+  assert.match(home.body,/<html data-vii-glass/);assert.match(home.body,/href="\/liquid-glass.css"/);
+  assert.equal((await call('/liquid-glass.css')).statusCode,200);
+  assert.match(home.body,/class="brand-logo" src="\/assets\/logo-email.png"/);
+  assert.doesNotMatch(home.body,/Ⅶ/);
+  assert.equal((await call('/brand.css')).statusCode,200);
+  const logo=await call('/assets/logo-email.png');assert.equal(logo.statusCode,200);assert.match(logo.headers['content-type'],/image\/png/);
+  assert.deepEqual(logo.rawPayload,await readFile(new URL('../../viicasa-backend/assets/logo-email.png',import.meta.url)));
+  const services=await call('/servicios/home-cleaning');assert.match(services.body,/<a href="\/">Vii<\/a>/);assert.match(services.body,/class="brand-logo"/);
+  assert.match((await call('/servicios/home-cleaning')).body,/<html data-vii-glass/);
+  for(const url of ['/pedido','/admin','/vendedor'])assert.doesNotMatch((await call(url)).body,/data-vii-glass|liquid-glass.css/);
   for(const file of ['/vii-feed.js','/vii-ux.css','/commerce-ux.js','/service-experience.js','/service-experience.css'])assert.equal((await call(file)).statusCode,200,file);
   assert.equal((await call('/api/client/likes')).statusCode,401);
   const request={selection:{service:'routine',frequency:'weekly',hours:2,full_clean:false,extras:[]},schedule:{days:['mon'],start_date:new Date(Date.now()+7*86400000).toISOString().slice(0,10),start_hour:8},address:{street:'123 Fictional Street',city:'Kelowna',state:'BC',country:'CA',postal_code:'V1Y 1A1'},customer:{name:'UX Guest',email:'ux-guest@example.invalid',phone:'+12505550123',consent:true},locale:'en',settings_revision:1};
