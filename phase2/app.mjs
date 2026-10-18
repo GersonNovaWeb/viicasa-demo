@@ -42,6 +42,7 @@ import {registerReleaseInspection} from './release-inspection.mjs';
 import {registerStayProviderOperations} from './stay-provider-operations.mjs';
 import {registerServiceCatalogue} from './service-catalogue.mjs';
 import {guestCheckout} from './guest-checkout.mjs';
+import {registerViiExperience} from './ux-experience.mjs';
 import {paymentGateway} from '../viicasa-backend/src/payments.js';
 
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
@@ -72,6 +73,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
   const analytics=providerGateways.analytics||analyticsGateway(connectionEnvironment,{origin}),analyticsOperations=registerExternalAnalytics(app,{db:databases.commercial,adminGuard:guards.adminGuard,gateway:analytics});
   const {customerGuard}=await registerCustomers(app,{db:databases.commercial,origin});
   const guestAccess=guestCheckout({app,db:databases.commercial,store,vault,origin,config,customerGuard,gateway:platformPayments});
+  await registerViiExperience(app,{db:databases.commercial,store,customerGuard});
   await registerServiceCatalogue(app,{db:databases.commercial,store,adminGuard:guards.adminGuard,customerGuard,config,origin,guestAccess});
   const shopify=providerGateways.shopify||shopifyGateway(connectionEnvironment),shopifyOperations=registerShopifyOperations(app,{db:databases.commercial,gateway:shopify,config,origin,vault,adminGuard:guards.adminGuard,customerGuard,guestAccess});
   config.stayMailEnabled=connectionEnvironment.PHASE2_STAY_MAIL_APPROVED==='true';
@@ -192,13 +194,14 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
       }
     }
     if(relative){/* The explicit team routes above take precedence over the public site. */}
-    else if(pathname==='/'||pathname==='/fase2')relative='phase2/public/index.html';
+    else if(pathname==='/')relative='viicasa-frontend-prototype/index.html';
+    else if(pathname==='/fase2')relative='phase2/public/index.html';
     else if(pathname==='/cliente')relative='phase2/public/customer.html';
     else if(pathname==='/pedido')relative='phase2/public/guest-order.html';
     else if(pathname==='/solicitar')relative='phase2/public/guest-request.html';
     else if(['/guest-order.js','/guest-buyer.js','/guest-request.js','/guest-checkout.css'].includes(pathname))relative='phase2/public'+pathname;
     else if(/^\/servicios(?:\/[a-z0-9-]+)?$/.test(pathname))relative='phase2/public/service-catalogue.html';
-    else if(['/service-catalogue.js','/service-catalogue.css','/catalogue-workspace.js'].includes(pathname))relative='phase2/public'+pathname;
+    else if(['/service-catalogue.js','/service-catalogue.css','/service-experience.js','/service-experience.css','/catalogue-workspace.js'].includes(pathname))relative='phase2/public'+pathname;
     else if(/^\/shop-channel\/[a-z0-9-]+$/.test(pathname))relative='phase2/public/shop-channel.html';
     else if(['/shopify-workspace.js','/analytics-external.js','/analytics-workspace.js','/release-workspace.js','/stay-provider-workspace.js','/runtime-presentation.js'].includes(pathname))relative='phase2/public'+pathname;
     else if(['/phase2.js','/phase2.css','/portal.js','/customer.js','/document.js','/service-workspace.js','/operations-workspace.js','/stays-workspace.js','/shop-channel.js','/shop-workspace.js','/reports-workspace.js','/followup-workspace.js','/consent.js','/consent.css','/measurement-workspace.js','/recurring-workspace.js','/recurring-customer.js','/pricing-workspace.js','/quote-editor.js','/financial-workspace.js','/commission-workspace.js','/launch-workspace.js','/closing-workspace.js','/channel-breakdown.js','/channel-cart.js','/stay-review-workspace.js','/commission-correction-workspace.js','/stripe-customer.js','/stripe-workspace.js'].includes(pathname))relative='phase2/public'+pathname;

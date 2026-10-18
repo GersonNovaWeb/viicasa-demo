@@ -28,6 +28,8 @@ const config=configFromEnv(demo?{DATABASE_DRIVER:'firestore',FIREBASE_MODE:'emul
 let appPromise,authService;
 // Section-level preview: never changes the payment mode of ViiShop or properties.
 config.viilifeMode=modes.viilifeMode;
+// Contact + consent attach to a scoped guest order, never to an unverified account.
+config.allowGuestCheckout=true;
 config.viilifeDemoMail=process.env.VIILIFE_DEMO_MAIL_MODE||'outbox';
 if(!['demo','live'].includes(config.viilifeMode)||!['outbox','smtp'].includes(config.viilifeDemoMail))throw Error('Invalid ViiLife mode');
 if(demo&&config.viilifeDemoMail==='smtp'){
@@ -82,7 +84,7 @@ export async function handlePlatform(req,res,url){
     limit(req);
     const mutation=!['GET','HEAD'].includes(req.method);
     if(mutation&&path!=='/v1/webhooks/stripe'&&req.headers.origin!==origin)fail(403,'Origen no permitido');
-    if(path==='/api/config'&&req.method==='GET'){json(res,200,{demo,viilifeMode:config.viilifeMode,...locationPreference(req,(process.env.TRUSTED_PROXY_IPS||'').split(',').map(s=>s.trim()).filter(Boolean)),commerceEnabled:writesOpen(),payment:config.paymentProvider,googleEnabled:socialProviders().google,authProviders:socialProviders(),firebase:!demo?{apiKey:process.env.FIREBASE_WEB_API_KEY,authDomain:process.env.FIREBASE_AUTH_DOMAIN||'viicasa.firebaseapp.com',projectId:config.firebaseProjectId,appId:process.env.FIREBASE_WEB_APP_ID}:null});return true;}
+    if(path==='/api/config'&&req.method==='GET'){json(res,200,{demo,guestCheckoutEnabled:true,viilifeMode:config.viilifeMode,...locationPreference(req,(process.env.TRUSTED_PROXY_IPS||'').split(',').map(s=>s.trim()).filter(Boolean)),commerceEnabled:writesOpen(),payment:config.paymentProvider,googleEnabled:socialProviders().google,authProviders:socialProviders(),firebase:!demo?{apiKey:process.env.FIREBASE_WEB_API_KEY,authDomain:process.env.FIREBASE_AUTH_DOMAIN||'viicasa.firebaseapp.com',projectId:config.firebaseProjectId,appId:process.env.FIREBASE_WEB_APP_ID}:null});return true;}
     const app=await api();const store=app.store;
     if(['/api/auth/google','/api/auth/social'].includes(path)&&req.method==='POST'){
       if(demo||!process.env.FIREBASE_WEB_API_KEY)fail(503,'El acceso social no está habilitado en este entorno');
@@ -123,7 +125,7 @@ export async function handlePlatform(req,res,url){
       }else secret=cookies(req).vc_admin;
       if(!secret)fail(401,'Acceso administrativo requerido');
     }
-    const allowed=/^\/v1\/(properties(?:\/[^/]+)?|products(?:\/[^/]+)?|shop\/settings|cleaning\/(?:settings|quote|requests|preferences)|bookings(?:\/quote)?|cart(?:\/items\/[^/]+)?|orders|checkouts\/[^/]+(?:\/(?:payment|cancel))?|inquiries|admin\/.+|media\/[^/]+|webhooks\/stripe)$/;
+    const allowed=/^\/v1\/(properties(?:\/[^/]+)?|products(?:\/[^/]+)?|shop\/settings|cleaning\/(?:settings|quote|requests|preferences)|bookings(?:\/quote)?|cart(?:\/items\/[^/]+)?|orders|checkouts\/[^/]+(?:\/(?:payment|cancel|reconcile))?|inquiries|admin\/.+|media\/[^/]+|webhooks\/stripe)$/;
     const viilifeLiveRoute=/^\/v1\/viilife\/(settings|quote|requests)$/;
     const viilifeDemoRoute=/^\/v1\/viilife-demo\/(settings|quote|requests(?:\/[a-f0-9-]+(?:\/pay)?)?)$/;
     if(!allowed.test(target)&&!viilifeDemoRoute.test(target)&&!viilifeLiveRoute.test(target))fail(404,'Ruta no encontrada');

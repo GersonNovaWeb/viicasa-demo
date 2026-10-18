@@ -9,6 +9,8 @@ export function paymentGateway(config, options={}) {
     const stripe = options.stripe || new Stripe(config.stripeKey, { maxNetworkRetries: 2, timeout: 15000 });
     return {
       provider: 'stripe',
+      // Server-to-server retrieval only; browser return parameters are not proof.
+      retrieve(reference) { return stripe.checkout.sessions.retrieve(reference); },
       async create(payment, checkout) {
         const returnPath=config.checkoutReturnPath?await config.checkoutReturnPath(checkout):null;
         const session = await stripe.checkout.sessions.create({ mode: 'payment', payment_method_types: ['card'],

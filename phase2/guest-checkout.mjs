@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {reconcilePayment} from '../viicasa-backend/src/firestore-payments.js';
 import {token,hash,fail} from '../viicasa-backend/src/lib.js';
 import * as s from '../viicasa-backend/src/schemas.js';
 import {cookieValue} from './api.mjs';
@@ -95,6 +96,11 @@ export function guestCheckout({app,db,store,vault,origin,config,customerGuard,ga
     const g=await checkedLink(r.body.access),secret=token();await db.query("INSERT INTO guest_order_grants(token_hash,kind,resource_id,expires_at) VALUES($1,$2,$3,now()+interval '15 minutes')",[hash(secret),g.kind,g.id]);reply.header('Set-Cookie',cookie('vc2_order',secret,900));return{ok:true,reference:g.id};
   });
   app.get('/api/guest/order',{schema:{querystring:s.object({reference:s.uuid},[])}},async r=>{const g=await grant(r);if(r.query.reference&&r.query.reference!==g.id)fail(409,'Another order was opened in this browser. Reopen this order from its email link.');const row=await resource(g),user=await authenticatedCustomer(db,cookieValue(r,'vc2_client'));return{...row,can_claim:Boolean(!['contract','invoice'].includes(g.kind)&&user&&user.email===row.email),account_optional:true};});
+  app.post('/api/guest/order/reconcile',{preHandler:originGuard,schema:{body:s.object({reference:s.uuid})},config:{rateLimit:{max:10,timeWindow:'5 minutes'}}},async r=>{
+    const g=await grant(r);if(g.id!==r.body.reference||g.kind!=='platform')fail(409,'Reopen this order from its private link.');
+    const c=await store.get('checkouts',g.id);if(!c)fail(404,'Order not found.');
+    await reconcilePayment(store,config,gateway,c.guest_id,c.id);return{ok:true};
+  });
   app.post('/api/guest/order/payment',{preHandler:originGuard,schema:{body:s.object({reference:s.uuid})},config:{rateLimit:{max:10,timeWindow:'5 minutes'}}},async(r,reply)=>{
     const g=await grant(r);if(g.id!==r.body.reference)fail(409,'Order access changed. Reopen the private link before paying.');if(g.kind!=='platform')fail(409,'This entry is a service enquiry or a simulated/external checkout, not a Stripe payment.');
     const c=await store.get('checkouts',g.id);if(!c)fail(404,'Order not found.');

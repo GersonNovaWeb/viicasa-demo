@@ -37,6 +37,9 @@ if(document.body.hasAttribute('data-catalogue-page')){
   const lang=language()==='es'?'es':'en',params=new URLSearchParams(location.search),channel=params.get('channel')==='viiconcierge'?'viiconcierge':'viilife',container=document.querySelector('#catalogue-page'),id=location.pathname.split('/')[2];
   document.documentElement.lang=lang;document.querySelector('#catalogue-account').textContent=lang==='es'?'Mi cuenta':'My account';
   document.querySelector('#catalogue-language').textContent=lang==='es'?'EN':'ES';document.querySelector('#catalogue-language').onclick=()=>{localStorage.setItem('viicasa-prototype-language',lang==='es'?'en':'es');localStorage.setItem('viicasa-phase2-language',lang==='es'?'en':'es');location.reload();};
-  if(id)detail(container,id,channel,lang).catch(e=>{container.innerHTML=`<h1>${lang==='es'?'Servicio no disponible.':'Service unavailable.'}</h1><p role="alert">${esc(e.message)}</p><a href="/servicios">← ${lang==='es'?'Volver al catálogo':'Back to catalogue'}</a>`;});
+  if(id){
+    const {renderServiceExperience}=await import('/service-experience.js');
+    renderServiceExperience(container,id,channel,lang).catch(e=>{container.innerHTML='<h1>'+ (lang==='es'?'Servicio no disponible.':'Service unavailable.')+'</h1><p role="alert">'+esc(e.message)+'</p><a href="/servicios">← '+(lang==='es'?'Volver al catálogo':'Back to catalogue')+'</a>';});
+  }
   else{container.innerHTML=`<nav class="vc-channel-nav"><a href="/servicios?channel=viilife" ${channel==='viilife'?'aria-current="page"':''}>ViiLife</a><a href="/servicios?channel=viiconcierge" ${channel==='viiconcierge'?'aria-current="page"':''}>ViiConcierge</a></nav><div id="catalogue-list"></div>`;void mountServiceCatalogue(document.querySelector('#catalogue-list'),{channel,lang});}
 }

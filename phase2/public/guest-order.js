@@ -12,7 +12,12 @@ function errorView(error){root.innerHTML=`<section class="panel"><p class="eyebr
 async function documentAction(path,body){const r=await fetch('/api/client/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await r.json();if(!r.ok)throw Error(data.error||'Unable to update this document.');return data;}
 async function load(){
   document.documentElement.lang=lang;
-  const d=await api('order'+(reference?'?reference='+encodeURIComponent(reference):'')),o=d.order,status=o.status||o.stage||'new';
+  let d=await api('order'+(reference?'?reference='+encodeURIComponent(reference):''));
+  // Only an existing, privately authorised Stripe session is verified. Return flags prove nothing.
+  if(d.kind==='platform'&&d.order.status==='pending'){
+    try{await api('order/reconcile',{reference:d.order.id});d=await api('order?reference='+encodeURIComponent(d.order.id));}catch{/* The webhook can still confirm; never invent a paid state. */}
+  }
+  const o=d.order,status=o.status||o.stage||'new';
   reference=o.id;history.replaceState(null,'','/pedido?reference='+encodeURIComponent(reference));
   const total=o.total_minor??o.snapshot?.quote?.total_minor??o.details?.estimate?.total_minor,lines=o.snapshot?.lines||o.detail?.items||o.detail?.lines||[];
   document.title=L('Tu pedido privado','Your private order')+' · VIICASA';document.querySelector('footer a').textContent=L('Privacidad y condiciones','Privacy & terms');
@@ -32,7 +37,7 @@ async function load(){
     const button=document.querySelector('#guest-invoice-pay');if(button)button.onclick=async()=>{button.disabled=true;try{const p=await documentAction('invoices/'+o.id+'/payment',{});if(p.checkout_url){const url=new URL(p.checkout_url);if(url.protocol!=='https:'||url.hostname!=='checkout.stripe.com')throw Error('Invalid payment destination.');location.assign(url.href);}else document.querySelector('#guest-result').textContent=L('Pago de demo preparado. No hay cobro real.','Demo payment prepared. No real charge.');}catch(error){document.querySelector('#guest-result').textContent=error.message;}finally{button.disabled=false;}};
   }
   document.querySelector('#guest-refresh').onclick=()=>load().catch(errorView);
-  const pay=document.querySelector('#guest-pay');if(pay)pay.onclick=async()=>{pay.disabled=true;const result=document.querySelector('#guest-result');try{const p=await api('order/payment',{reference});if(p.checkout_url){const target=new URL(p.checkout_url);if(target.protocol!=='https:'||target.hostname!=='checkout.stripe.com')throw Error('Invalid secure payment destination.');location.assign(target.href);}else result.textContent=L('Pago de demostración preparado. No hay cobro real; el administrador puede simular el resultado.','Demo payment prepared. No real charge; the administrator can simulate its outcome.');}catch(e){result.textContent=e.message;}finally{pay.disabled=false;}};
+  const pay=document.querySelector('#guest-pay');if(pay)pay.onclick=async()=>{pay.disabled=true;const result=document.querySelector('#guest-result');try{const p=await api('order/payment',{reference});if(p.status==='paid'){await load();return;}if(p.checkout_url){const target=new URL(p.checkout_url);if(target.protocol!=='https:'||target.hostname!=='checkout.stripe.com')throw Error('Invalid secure payment destination.');location.assign(target.href);}else result.textContent=L('Pago de demostración preparado. No hay cobro real; el administrador puede simular el resultado.','Demo payment prepared. No real charge; the administrator can simulate its outcome.');}catch(e){result.textContent=e.message;}finally{pay.disabled=false;}};
   const provider=document.querySelector('#guest-provider');if(provider)provider.onclick=()=>{const target=new URL(o.checkout_url);if(target.protocol!=='https:'||target.username||target.password)throw Error('Invalid provider checkout.');location.assign(target.href);};
   const account=document.querySelector('#guest-account');if(account)account.onclick=()=>sessionStorage.setItem('viicasa-return-order','1');
   const claim=document.querySelector('#guest-claim');if(claim)claim.onclick=async()=>{if(!document.querySelector('#guest-claim-consent').checked)return;claim.disabled=true;try{const response=await api('order/claim',{consent:true,reference});location.assign(response.account_url);}catch(e){document.querySelector('#guest-result').textContent=e.message;claim.disabled=false;}};

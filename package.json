@@ -8,6 +8,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:ux": "node --test --test-concurrency=1 phase2/test/ux-experience.test.mjs phase2/test/guest-checkout.test.mjs phase2/test/service-catalogue.test.mjs",
+    "test:checkout-resolution": "node --test test/checkout-resolution.test.mjs test/scroll-navigation.test.mjs test/viilife-actions.test.mjs test/demo-products.test.mjs test/startup.test.mjs test/stripe-cad.test.mjs",
     "start": "node --env-file-if-exists=.env.phase2.local phase2/server.mjs",
     "dev": "node --env-file-if-exists=.env.phase2.local phase2/server.mjs",
     "dev:phase1": "node viicasa-frontend-prototype/dev-local.mjs",
