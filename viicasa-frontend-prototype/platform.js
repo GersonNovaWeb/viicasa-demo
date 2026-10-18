@@ -5,7 +5,9 @@ import {viilifeDemoUI} from './viilife-demo-ui.js';
 import {bindViiLifeActions} from './viilife-actions.js';
 import {enhanceCommerce} from './commerce-ux.js';
 import {installPageScroll,scrollFeedTo,resetPageScroll,finishPageScroll} from './scroll-navigation.js';
+import {installSectionMotion} from './section-motion.js';
 installPageScroll();
+const sectionMotion=installSectionMotion();
 function cleaning(){const real=cleaningUI({api,frame,L,esc,money,settings,lang,checkoutResult});const live=settings.viilifeMode!=='demo',preview=viilifeDemoUI({api,frame,L,esc,money,lang,live,platformSettings:settings,checkoutResult});return {...real,page:preview.page,...(!live?{admin:preview.admin,preferences:preview.account}:{})};}
 const $=s=>document.querySelector(s);
 // Header height changes with viewport and language; never cover the first content row.
@@ -145,7 +147,7 @@ await cleaning().page({mount:content=>{section.innerHTML=(settings.phase===2?`<d
       return;
     }
     busy();if(path==='/propiedades')await properties();else if(path.startsWith('/viiconcierge/'))await property(path.split('/')[2]);else await otherRoute(path);
-  }catch(e){failure(e);}finally{finishPageScroll();void enhanceCommerce({api,L,esc,money,settings}).catch(()=>{});}
+  }catch(e){failure(e);}finally{finishPageScroll();void sectionMotion.enter().catch(()=>{});void enhanceCommerce({api,L,esc,money,settings}).catch(()=>{});}
 }
 async function serviceCatalogueSection(section,channel){
   if(!document.querySelector('link[href="/service-catalogue.css"]')){const style=document.createElement('link');style.rel='stylesheet';style.href='/service-catalogue.css';document.head.append(style);}

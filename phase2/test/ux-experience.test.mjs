@@ -33,6 +33,7 @@ test('published UX + guest checkout + verified Stripe return + domestic shipping
   assert.match(home.body,/class="brand-logo" src="\/assets\/viicasa-logo-black.png"/);
   assert.doesNotMatch(home.body,/Ⅶ/);
   assert.equal((await call('/brand.css')).statusCode,200);
+  assert.equal((await call('/section-motion.js')).statusCode,200);
   const logo=await call('/assets/viicasa-logo-black.png');assert.equal(logo.statusCode,200);assert.match(logo.headers['content-type'],/image\/png/);
   assert.deepEqual(logo.rawPayload,await readFile(new URL('../../viicasa-frontend-prototype/assets/viicasa-logo-black.png',import.meta.url)));
   const branding=(await call('/brand.css')).body;assert.match(branding,/background:transparent;border:0;border-radius:0;padding:0/);
