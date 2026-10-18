@@ -1,9 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {installSectionMotion,sectionDirection} from '../viicasa-frontend-prototype/section-motion.js';
 function fixture({path='/shop',reduced=false,storageWorks=true,animate=true}={}){
   const handlers={},events={},storage=new Map(),animations=[],navigation=[],dataset={};
-  const feed=animate?{animate(frames,options){animations.push({frames,options});return{finished:Promise.resolve(),cancel(){}};}}:{};
+  const feed=animate?{animate(frames,options){const entry={frames,options,cancelled:false};animations.push(entry);return{finished:Promise.resolve(),cancel(){entry.cancelled=true;}};}}:{};
   const win={location:{pathname:path,origin:'https://viicasa.example',href:'https://viicasa.example'+path,assign:url=>navigation.push(url)},innerWidth:390,matchMedia:()=>({matches:reduced}),setTimeout,clearTimeout,
     sessionStorage:{setItem(k,v){if(!storageWorks)throw Error('unavailable');storage.set(k,v);},getItem:k=>storage.get(k),removeItem:k=>storage.delete(k)},addEventListener:(n,fn)=>events[n]=fn};
   const doc={documentElement:{dataset},querySelector:()=>feed,addEventListener:(n,fn)=>handlers[n]=fn};
@@ -20,10 +21,21 @@ test('normal tab click slides content only, then follows the real URL',async()=>
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(f.navigation,['https://viicasa.example/viilife']);assert.equal(f.animations.length,1);
   assert.match(f.animations[0].frames[1].transform,/translateX\(-/);assert.equal(f.animations[0].options.duration,150);
+  assert.equal(f.animations[0].options.fill,'forwards');assert.equal(f.animations[0].cancelled,false);
+  assert.ok(f.animations[0].frames.every(frame=>!('opacity' in frame)));
   assert.equal(f.dataset.sectionMotion,undefined);
   const destination=fixture({path:'/viilife'});for(const [k,v]of f.storage)destination.storage.set(k,v);
   await destination.motion.enter();assert.equal(destination.animations.length,1);assert.equal(destination.animations[0].options.duration,360);assert.equal(destination.storage.size,0);
+  assert.ok(destination.animations[0].frames.every(frame=>!('opacity' in frame)));assert.equal(destination.animations[0].cancelled,true);
+  f.events.pageshow({persisted:true});assert.equal(f.animations[0].cancelled,true);
   await destination.motion.enter();assert.equal(destination.animations.length,1);
+});
+test('the first HTML paint uses a light shell before JavaScript and async catalogue loading',async()=>{
+  const html=await readFile(new URL('../viicasa-frontend-prototype/index.html',import.meta.url),'utf8');
+  assert.match(html,/<html class="platform-shell"/);assert.match(html,/<body class="platform">/);
+  assert.match(html,/<style>html.platform-shell\{background:#f7f4ee;color-scheme:light\}/);
+  assert.match(html,/name="theme-color" content="#f7f4ee"/);
+  assert.ok(html.indexOf('<style>')<html.indexOf('href="/styles.css"'));
 });
 test('native behavior is preserved for modifiers, current tab, private paths, missing storage, reduced motion and unsupported animation',()=>{
   for(const extra of [{ctrlKey:true},{metaKey:true},{shiftKey:true},{altKey:true},{button:1},{defaultPrevented:true}]){

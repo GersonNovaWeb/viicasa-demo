@@ -218,7 +218,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
         body=Buffer.from(body.toString().replace('<html ','<html data-vii-glass ').replace('</head>','<link rel="stylesheet" href="/liquid-glass.css"></head>'));
       }
       if(relative.endsWith('.html')&&pathname!=='/pedido')body=Buffer.from(body.toString().replace('</head>','<script type="module" src="/runtime-presentation.js"></script></head>'));
-      if(relative==='viicasa-frontend-prototype/index.html')body=Buffer.from(body.toString().replace('<body>','<body><a class="phase2-link" href="/equipo" style="position:fixed;bottom:8px;right:16px;z-index:40;background:#243d34;color:#fff;padding:8px 16px;border-radius:20px;font:12px Arial">Phase 2 · Team portal</a>'));
+      if(relative==='viicasa-frontend-prototype/index.html')body=Buffer.from(body.toString().replace('<body class="platform">','<body class="platform"><a class="phase2-link" href="/equipo" style="position:fixed;bottom:8px;right:16px;z-index:40;background:#243d34;color:#fff;padding:8px 16px;border-radius:20px;font:12px Arial">Phase 2 · Team portal</a>'));
       if(relative.endsWith('.html')&&!portalRole&&!['/admin/plataforma','/pedido'].includes(pathname))body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/consent.css"><script type="module" src="/consent.js"></script></head>'));
       reply.type(types[extname(file)]||'application/octet-stream').header('Cache-Control','no-store');return body;
     }catch{fail(404,'Not found.');}
