@@ -1,4 +1,5 @@
 import {installGuestBuyer} from './guest-buyer.js';
+import {mountPublicMenu,viiIcon} from '/vii-ui.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,body,method='POST'){const r=await fetch('/api'+path,body?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{}),data=await r.json();if(!r.ok)throw Object.assign(Error(data.error||'Unable to complete this request.'),{status:r.status});return data;}
 export async function renderServiceExperience(root,id,requestedChannel,lang){
@@ -7,6 +8,12 @@ export async function renderServiceExperience(root,id,requestedChannel,lang){
   const name=txt(channel==='viiconcierge'?service.concierge_name:service.name),isCleaning=id==='home-cleaning'&&channel==='viilife',canBook=isCleaning&&service.pricing.kind==='fixed',label=canBook?L('Reservar','Book'):L('Solicitar cotización','Request a quote'),price=service.pricing.kind==='fixed'?cash(service.pricing.amount_minor):L('A tu medida','Tailored to you');
   const bundle=data.packages.find(p=>p.channels.includes(channel)&&p.services.includes(id)),complement=bundle?.services.map(key=>data.items.find(s=>s.id===key)).find(s=>s&&s.id!==id);
   document.title=name+' — VIICASA';document.body.dataset.serviceBrand=channel;
+  const header=document.querySelector('.preview-header');
+  header.classList.add('vii-service-header');header.innerHTML='<a class="vii-service-back" href="/'+channel+'?return=1">'+viiIcon('back')+'<span>'+(channel==='viilife'?'ViiLife':'ViiConcierge')+'</span></a><div class="vii-service-tools"><button type="button" id="service-like" aria-label="'+L('Guardar en Me gusta','Save to Likes')+'" aria-pressed="false">'+viiIcon('heart')+'</button><button type="button" id="menu-toggle" aria-label="'+L('Abrir menú','Open menu')+'" aria-expanded="false"><span></span><span></span><span></span></button></div>';
+  mountPublicMenu({L,esc});
+  const like=header.querySelector('#service-like');
+  like.onclick=async()=>{try{const liked=like.getAttribute('aria-pressed')!=='true';await api('/client/likes',{item_key:'service:'+id,liked},'PUT');like.setAttribute('aria-pressed',String(liked));}catch(error){if(error.status===401)location.assign('/cliente?return_service='+encodeURIComponent(id)+'&channel='+channel);else{like.setAttribute('aria-label',error.message);}}};
+  void api('/client/likes').then(data=>like.setAttribute('aria-pressed',String(data.items.some(x=>x.item_key==='service:'+id)))).catch(()=>{});
   if(!document.querySelector('link[href="/service-experience.css"]')){const link=document.createElement('link');link.rel='stylesheet';link.href='/service-experience.css';document.head.append(link);}
   const back=document.createElement('a');back.className='vx-back';back.href='/'+channel+'?return=1';back.textContent='‹ '+(channel==='viilife'?'ViiLife':'ViiConcierge');root.append(back);
   const video=id==='home-cleaning'?'/assets/limpieza-hero-web.mp4':null;

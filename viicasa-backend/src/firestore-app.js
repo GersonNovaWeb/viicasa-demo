@@ -37,7 +37,7 @@ export async function buildFirestoreApp(config,options={}){
     reply.code(status).send({error:status>=500&&!error.statusCode?'Error interno':error.message,request_id:request.id});
   });
   await app.register(cors,{origin:config.origins,credentials:false,allowedHeaders:['Content-Type','Authorization','Idempotency-Key'],methods:['GET','POST','PUT','PATCH','DELETE','OPTIONS']});
-  await app.register(helmet);await app.register(rateLimit,{max:options.testing?100000:120,timeWindow:'1 minute'});await app.register(multipart);
+  await app.register(helmet);await app.register(rateLimit,options.rateLimit||{max:options.testing?100000:120,timeWindow:'1 minute'});await app.register(multipart);
   await app.register(swagger,{openapi:{info:{title:'VIICASA API · Fase 1 · Firestore',version:'0.2.0',description:'Backend Node.js para Hostinger y Firestore. Importes en centavos.'},
     components:{securitySchemes:{bearerAuth:{type:'http',scheme:'bearer'},guestAuth:{type:'http',scheme:'bearer',description:'Token de /v1/guest-sessions'}}}}});
   if(!config.production)await app.register(swaggerUi,{routePrefix:'/docs'});

@@ -44,6 +44,7 @@ import {registerServiceCatalogue} from './service-catalogue.mjs';
 import {guestCheckout} from './guest-checkout.mjs';
 import {registerViiExperience} from './ux-experience.mjs';
 import {paymentGateway} from '../viicasa-backend/src/payments.js';
+import {storefrontLimits} from './traffic-limits.mjs';
 
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3030',testing=false,stripeKey,stripeWebhookSecret,mailMode='outbox',smtp={},mailFrom='VIICASA Demo <accounts@example.invalid>',adminEmail='team@example.invalid',serviceGateway,connectionEnvironment={},identityGateway,providerGateways={},mode='demo'}={}){
@@ -55,13 +56,13 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
   if(!profile.simulations&&!stripeKey)config.paymentProvider='disabled';
   if(profile.mode==='staging')config.mediaDir=resolve(root,'data/phase2-staging-media');
   const platformPayments=providerGateways.platformPayments||paymentGateway(config);
-  const base=await buildFirestoreApp(config,{store,logger:false,testing,gateway:platformPayments});
+  const base=await buildFirestoreApp(config,{store,logger:false,testing,gateway:platformPayments,rateLimit:storefrontLimits({testing,internal:true})});
   const app=Fastify({logger:false,bodyLimit:9*1024*1024,ajv:{customOptions:{removeAdditional:false}}});
   app.addContentTypeParser('multipart/form-data',{parseAs:'buffer'},(_,body,done)=>done(null,body));
   app.setErrorHandler((error,req,reply)=>{const status=error.validation?400:error.statusCode||(['23505','23503','22P02'].includes(error.code)?409:500);reply.code(status).send({error:status<500?error.validation?'Invalid form values.':error.message:'Unable to complete this operation.'});});
   const browserAnalytics=connectionEnvironment.PHASE2_GTM_ENABLED==='true';
   await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'",...(browserAnalytics?['https://www.googletagmanager.com','https://connect.facebook.net']:[])],styleSrc:["'self'","'unsafe-inline'",'https://fonts.googleapis.com'],fontSrc:["'self'",'https://fonts.gstatic.com','data:'],imgSrc:["'self'",'https:','data:'],connectSrc:["'self'",...(browserAnalytics?['https://www.googletagmanager.com','https://*.google-analytics.com','https://www.facebook.com']:[])],formAction:["'self'"],upgradeInsecureRequests:null}}});
-  await app.register(rateLimit,{max:testing?100000:250,timeWindow:'1 minute'});
+  await app.register(rateLimit,storefrontLimits({testing}));
   app.addHook('onSend',async(r,reply,payload)=>{reply.header('X-Robots-Tag','noindex, nofollow');return payload;});
   app.addHook('onRequest',async r=>{if(profile.simulations||['GET','HEAD','OPTIONS'].includes(r.method))return;const path=r.url.split('?')[0];if(/\/(simulate(?:-[a-z-]+)?|examples|demo|demo-products|demo-properties)(\/|$)/.test(path)||path.startsWith('/api/viilife-demo')||path==='/api/commercial/sales'||path==='/api/client/shop-channel/checkouts'||path.startsWith('/api/commercial/commission-')&&/\/(recovery|supplement)$/.test(path))fail(409,'Simulation tools are unavailable in staging. Use the separate demo profile.');if(!stripeKey&&(/\/(payment|checkouts?)$/.test(path)))fail(409,'Stripe test checkout is disabled until sandbox credentials are configured.');});
   const guards=await registerCommercial(app,{db:databases.commercial,vault,origin,secure});
@@ -138,7 +139,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
     if(g.customer&&['/api/orders','/api/bookings','/api/viilife/requests','/api/cleaning/requests'].includes(req.url)&&req.body?.customer)req.body.customer.email=g.customer.email;
     const paying=/^\/api\/checkouts\/([a-f0-9-]{36})\/payment$/.exec(req.url);
     if(paying&&req.method==='POST'&&!g.customer){const c=await store.get('checkouts',paying[1]);if(c?.guest_id===g.row.id)await guestAccess.sessionForCheckout(reply,c.id,3600);}
-    const response=await base.inject({method:req.method,url:target,headers:{authorization:'Bearer '+secret,...(req.headers['idempotency-key']?{'idempotency-key':req.headers['idempotency-key']}:{}),...(Buffer.isBuffer(req.body)?{'content-type':req.headers['content-type']}:{})},payload:req.body});
+    const response=await base.inject({method:req.method,url:target,remoteAddress:req.ip,headers:{authorization:'Bearer '+secret,...(req.headers['idempotency-key']?{'idempotency-key':req.headers['idempotency-key']}:{}),...(Buffer.isBuffer(req.body)?{'content-type':req.headers['content-type']}:{})},payload:req.body});
     if(!g.customer&&response.statusCode<300&&req.method==='POST'&&['/api/orders','/api/bookings','/api/viilife/requests','/api/cleaning/requests'].includes(req.url)){
       const data=response.json(),id=data.checkout?.id||(data.kind?data.id:null);
       if(id)await store.transaction(async tx=>{const c=await tx.get('checkouts',id);if(!c||c.guest_id!==g.row.id)return;const actionUrl=await guestAccess.platformLink(tx,c);const {enqueue}=await import('../viicasa-backend/src/firestore-commerce.js');const {brandedMail}=await import('../viicasa-backend/src/platform-mail.js');const mail=brandedMail({testNote:config.paymentProvider==='demo'?'Phase 2 demonstration. No real payment or delivery.':'Stripe sandbox review. This is not a payment receipt. No real money is charged.',subject:'VIICASA · Your private order link',title:'Your order, without an account',paragraphs:[`Hello ${c.customer_name},`,'Use this private link to review this order and complete payment when available. Creating an account is optional. Do not forward this link.'],actionUrl,actionLabel:'View my order'});await enqueue(tx,'guest-access:'+id,c.customer_email,mail.subject,mail.body,mail.html);});
@@ -220,6 +221,7 @@ export async function buildPhase2App(databases,vault,{origin='http://127.0.0.1:3
       if(relative.endsWith('.html')&&pathname!=='/pedido')body=Buffer.from(body.toString().replace('</head>','<script type="module" src="/runtime-presentation.js"></script></head>'));
       if(relative==='viicasa-frontend-prototype/index.html')body=Buffer.from(body.toString().replace('<body class="platform">','<body class="platform"><a class="phase2-link" href="/equipo" style="position:fixed;bottom:8px;right:16px;z-index:40;background:#243d34;color:#fff;padding:8px 16px;border-radius:20px;font:12px Arial">Phase 2 · Team portal</a>'));
       if(relative.endsWith('.html')&&!portalRole&&!['/admin/plataforma','/pedido'].includes(pathname))body=Buffer.from(body.toString().replace('</head>','<link rel="stylesheet" href="/consent.css"><script type="module" src="/consent.js"></script></head>'));
+      if(!portalRole&&pathname!=='/admin/plataforma'&&['viicasa-frontend-prototype/index.html','phase2/public/service-catalogue.html','phase2/public/customer.html'].includes(relative))body=Buffer.from(body.toString().replace('<html ','<html data-vii-ux-final ').replace('</head>','<link rel="stylesheet" href="/vii-final.css"></head>'));
       reply.type(types[extname(file)]||'application/octet-stream').header('Cache-Control','no-store');return body;
     }catch{fail(404,'Not found.');}
   });

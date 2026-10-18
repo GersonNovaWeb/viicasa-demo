@@ -28,7 +28,7 @@ test('published UX + guest checkout + verified Stripe return + domestic shipping
   const cookieOf=r=>[].concat(r.headers['set-cookie']||[]).map(x=>x.split(';')[0]).join('; ');
   const call=(url,method='GET',payload,cookie)=>app.inject({url,method,payload,headers:{origin,...(cookie?{cookie}:{}),'idempotency-key':randomUUID()}});
   const home=await call('/');assert.equal(home.statusCode,200);assert.match(home.body,/platform.js/);assert.doesNotMatch(home.body,/Phase 2 preview/);
-  assert.match(home.body,/<html data-vii-glass/);assert.match(home.body,/href="\/liquid-glass.css"/);
+  assert.match(home.body,/<html[^>]*data-vii-glass/);assert.match(home.body,/href="\/liquid-glass.css"/);
   assert.equal((await call('/liquid-glass.css')).statusCode,200);
   assert.match(home.body,/class="brand-logo" src="\/assets\/viicasa-logo-black.png"/);
   assert.doesNotMatch(home.body,/Ⅶ/);
@@ -38,7 +38,11 @@ test('published UX + guest checkout + verified Stripe return + domestic shipping
   assert.deepEqual(logo.rawPayload,await readFile(new URL('../../viicasa-frontend-prototype/assets/viicasa-logo-black.png',import.meta.url)));
   const branding=(await call('/brand.css')).body;assert.match(branding,/background:transparent;border:0;border-radius:0;padding:0/);
   const services=await call('/servicios/home-cleaning');assert.match(services.body,/<a href="\/">Vii<\/a>/);assert.match(services.body,/class="brand-logo"/);
-  assert.match((await call('/servicios/home-cleaning')).body,/<html data-vii-glass/);
+  assert.match((await call('/servicios/home-cleaning')).body,/<html[^>]*data-vii-glass/);
+  assert.match(home.body,/data-vii-ux-final/);assert.equal((await call('/vii-final.css')).statusCode,200);
+  for(const file of ['/vii-ui.js','/vii-tiles.js','/vii-intent.js','/vii-detail.js'])assert.equal((await call(file)).statusCode,200,file);
+  assert.match((await call('/cliente')).body,/data-vii-ux-final/);
+  for(const path of ['/admin','/vendedor','/pedido'])assert.doesNotMatch((await call(path)).body,/data-vii-ux-final/);
   for(const url of ['/pedido','/admin','/vendedor'])assert.doesNotMatch((await call(url)).body,/data-vii-glass|liquid-glass.css/);
   for(const file of ['/vii-feed.js','/vii-ux.css','/commerce-ux.js','/service-experience.js','/service-experience.css'])assert.equal((await call(file)).statusCode,200,file);
   assert.equal((await call('/api/client/likes')).statusCode,401);
