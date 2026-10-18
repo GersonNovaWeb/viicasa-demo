@@ -30,11 +30,12 @@ test('published UX + guest checkout + verified Stripe return + domestic shipping
   const home=await call('/');assert.equal(home.statusCode,200);assert.match(home.body,/platform.js/);assert.doesNotMatch(home.body,/Phase 2 preview/);
   assert.match(home.body,/<html data-vii-glass/);assert.match(home.body,/href="\/liquid-glass.css"/);
   assert.equal((await call('/liquid-glass.css')).statusCode,200);
-  assert.match(home.body,/class="brand-logo" src="\/assets\/logo-email.png"/);
+  assert.match(home.body,/class="brand-logo" src="\/assets\/viicasa-logo-black.png"/);
   assert.doesNotMatch(home.body,/Ⅶ/);
   assert.equal((await call('/brand.css')).statusCode,200);
-  const logo=await call('/assets/logo-email.png');assert.equal(logo.statusCode,200);assert.match(logo.headers['content-type'],/image\/png/);
-  assert.deepEqual(logo.rawPayload,await readFile(new URL('../../viicasa-backend/assets/logo-email.png',import.meta.url)));
+  const logo=await call('/assets/viicasa-logo-black.png');assert.equal(logo.statusCode,200);assert.match(logo.headers['content-type'],/image\/png/);
+  assert.deepEqual(logo.rawPayload,await readFile(new URL('../../viicasa-frontend-prototype/assets/viicasa-logo-black.png',import.meta.url)));
+  const branding=(await call('/brand.css')).body;assert.match(branding,/background:transparent;border:0;border-radius:0;padding:0/);
   const services=await call('/servicios/home-cleaning');assert.match(services.body,/<a href="\/">Vii<\/a>/);assert.match(services.body,/class="brand-logo"/);
   assert.match((await call('/servicios/home-cleaning')).body,/<html data-vii-glass/);
   for(const url of ['/pedido','/admin','/vendedor'])assert.doesNotMatch((await call(url)).body,/data-vii-glass|liquid-glass.css/);
